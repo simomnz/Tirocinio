@@ -107,7 +107,7 @@ contract CandidaturaTest is BaseTest {
 
     //DATA DI SCADENZA NON RAGGIUNTA: candidabile
     function candidatura_unSecondoPrimaDellaScadenza_accettata() public {
-        hiring.impostaTempo(hiring.startDate() + DURATA * 1 days );   //aggiungere -1
+        hiring.impostaTempo(hiring.startDate() + DURATA * 1 days -1);
         devCompleto.candidati(hiring, address(nft));
         Assert.ok(hiring.isEligible(address(devCompleto)), MSG_IDONEO);
     }
