@@ -1,0 +1,34 @@
+IN LOCALE
+
+  pip install behave --break-system-packages
+  cd esercizi
+  behave
+
+  22 scenari passati, 1 saltato (quello marcato @manual).
+
+DAL SISTEMA DI PROJECT MANAGEMENT
+
+  1. scrivi la user story e i criteri nella descrizione della task,
+     dentro un blocco di codice
+
+  2. scarica i criteri e salvali come .feature:
+
+     OP_TOKEN=xxx    python3 fetch-criteria.py openproject 1094
+     TAIGA_USER=xxx TAIGA_PASS=yyy python3 fetch-criteria.py taiga 2
+     JIRA_USER=xxx JIRA_TOKEN=yyy python3 fetch-criteria.py jira KAN-1
+
+  3. esegui:
+
+     behave
+
+  Lo stesso testo scritto nei tre sistemi deve produrre lo stesso file
+  e lo stesso esito.
+
+STRUTTURA
+
+  esercizi.py                      i cinque esercizi
+  fetch-criteria.py                scarica i criteri dalla task
+  vocabulary.md                    l'elenco delle frasi
+  features/US-*.feature            le user story con i criteri
+  features/steps/vocabolario.py    il codice che esegue le frasi
+  features/environment.py          cartella pulita prima di ogni scenario

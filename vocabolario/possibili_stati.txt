@@ -1,0 +1,29 @@
+OpenProject:
+  435  New
+  436  In specification
+  437  Specified
+  438  Confirmed
+  439  To be scheduled
+  440  Scheduled
+  441  In progress
+  442  Developed
+  443  In testing
+  444  Tested
+  445  Test failed
+  446  Closed  (closed)
+  447  On hold
+  448  Rejected  (closed)
+
+Taiga (simomnz-prova-api):
+  10986678  New
+  10986679  Ready
+  10986680  In progress
+  10986681  Ready for test
+  10986682  Done  (closed)
+  10986683  Archived  (closed)
+
+Jira (transizioni possibili per KAN-12):
+  11  To Do  ->  To Do
+  21  In Progress  ->  In Progress
+  31  In Review  ->  In Review
+  41  Done  ->  Done

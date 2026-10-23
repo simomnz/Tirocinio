@@ -1,0 +1,15 @@
+# Credenziali: non devono mai finire nel repository
+vocabolario/credentials.sh
+vocabolario/credenziali.sh
+*.key
+
+# Roba generata
+.venv/
+__pycache__/
+*.pyc
+artifacts/
+.deps/
+.states/
+.workspaces/
+vocabolario/credenziali*
+vocabolario/credentials*

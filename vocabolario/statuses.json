@@ -1,0 +1,5 @@
+{
+  "openproject:Prova":       {"passed": 444,      "failed": 445},
+  "taiga:simomnz-prova-api": {"passed": 10986681, "failed": 10986680},
+  "jira:KAN":                {"passed": "31",     "failed": "21"}
+}
