@@ -1,11 +1,9 @@
 // Verifica di una user story.
 //
-// Prende i criteri di accettazione dal sistema di project management,
+// Prende i criteri di accettazione dal sistema di project managemente e
 // il codice consegnato da GitHub, li esegue, riporta l'esito nel sistema
-// e firma sulla blockchain che i test automatici sono passati.
-//
-// Il job e' parametrico: lo stesso lavoro serve per qualsiasi user story
-// e per tutti e tre i sistemi, invece di averne uno per ciascuno.
+// e scrive sulla blockchain se i test automatici sono passati.
+
 
 pipeline {
     agent any
@@ -44,6 +42,7 @@ pipeline {
         TAIGA_USER  = 'simo.mnz@gmail.com'
         TAIGA_SLUG  = 'simomnz-prova-api'
         JIRA_URL    = 'https://simomnz.atlassian.net'
+        JIRA_PROJECT = 'KAN'
         JIRA_USER   = 'simo.mnz@gmail.com'
         SEPOLIA_RPC = 'https://ethereum-sepolia-rpc.publicnode.com'
 

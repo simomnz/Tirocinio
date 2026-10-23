@@ -17,7 +17,7 @@ pipeline {
                 git branch: 'main', url: 'https://github.com/simomnz/Tirocinio.git'
             }
         }
-
+        /*
         stage('2. Preparazione') {
             steps {
                 echo '--- Pulizia profonda e Installazione dipendenze ---'
@@ -25,6 +25,7 @@ pipeline {
                 sh 'npm install --legacy-peer-deps'
             }
         }
+        */
 
         stage('3. Compilazione') {
             steps {
