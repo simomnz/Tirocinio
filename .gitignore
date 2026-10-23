@@ -1,15 +1,21 @@
 # Credenziali: non devono mai finire nel repository
 vocabolario/credentials.sh
-vocabolario/credenziali.sh
+vocabolario/credenziali*
+vocabolario/credentials*
 *.key
 
-# Roba generata
+# Node e Hardhat
+node_modules/
+cache/
+artifacts/
+typechain-types/
+
+# Python
 .venv/
 __pycache__/
 *.pyc
-artifacts/
+
+# Remix
 .deps/
 .states/
 .workspaces/
-vocabolario/credenziali*
-vocabolario/credentials*
