@@ -39,6 +39,19 @@ def basic(user, secret):
     return {"Authorization": "Basic " + base64.b64encode(pair).decode("ascii")}
 
 
+def normalize(system, key):
+    """Su Jira la sigla del progetto si puo' omettere: "12" vale "KAN-12".
+
+    Va applicata una volta sola, all'ingresso: lo stesso identificativo
+    serve anche a scrivere il commento e a cambiare stato, quindi se la
+    normalizzazione stesse solo nel lettore la scrittura userebbe un
+    identificativo incompleto.
+    """
+    if system == "jira" and "-" not in key:
+        return JIRA_PROJECT + "-" + key
+    return key
+
+
 # ------------------------------------------------------------
 # I tre sistemi: ognuno restituisce (titolo, descrizione, progetto)
 # ------------------------------------------------------------
@@ -64,10 +77,6 @@ def from_taiga(key):
 
 
 def from_jira(key):
-    # comodita': "12" vale quanto "KAN-12"
-    if "-" not in key:
-        key = JIRA_PROJECT + "-" + key
-
     # la versione 2 restituisce la descrizione come testo semplice,
     # la 3 la restituisce a blocchi
     data = get(JIRA_URL + "/rest/api/2/issue/" + key, basic(JIRA_USER, JIRA_TOKEN))
@@ -117,6 +126,7 @@ def main():
         return 1
 
     system, key = sys.argv[1], sys.argv[2]
+    key = normalize(system, key)
 
     if system not in READERS:
         print("Unknown system: " + system, file=sys.stderr)
