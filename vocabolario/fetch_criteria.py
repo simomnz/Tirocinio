@@ -3,7 +3,7 @@
 #
 #   python3 fetch_criteria.py openproject 1115
 #   python3 fetch_criteria.py taiga 7
-#   python3 fetch_criteria.py jira KAN-12
+#   python3 fetch_criteria.py jira 12
 
 import base64
 import html
@@ -25,6 +25,7 @@ TAIGA_SLUG = os.environ.get("TAIGA_SLUG", "simomnz-prova-api")
 JIRA_URL = os.environ.get("JIRA_URL", "https://simomnz.atlassian.net")
 JIRA_USER = os.environ.get("JIRA_USER", "")
 JIRA_TOKEN = os.environ.get("JIRA_TOKEN", "")
+JIRA_PROJECT = os.environ.get("JIRA_PROJECT", "KAN")
 
 
 def get(address, headers=None, data=None):
@@ -63,6 +64,10 @@ def from_taiga(key):
 
 
 def from_jira(key):
+    # comodita': "12" vale quanto "KAN-12"
+    if "-" not in key:
+        key = JIRA_PROJECT + "-" + key
+
     # la versione 2 restituisce la descrizione come testo semplice,
     # la 3 la restituisce a blocchi
     data = get(JIRA_URL + "/rest/api/2/issue/" + key, basic(JIRA_USER, JIRA_TOKEN))
