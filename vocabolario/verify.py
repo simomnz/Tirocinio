@@ -67,6 +67,11 @@ def main():
         print("Unknown system: " + system, file=sys.stderr)
         return 2
 
+    # Su Jira la sigla del progetto si puo' omettere. La normalizzazione va
+    # fatta qui, una volta sola: lo stesso identificativo serve a leggere i
+    # criteri, a scrivere il commento e a cambiare stato.
+    key = fetch_criteria.normalize(system, key)
+
     # --- i criteri, dal sistema di project management ---
     title, description, project = fetch_criteria.READERS[system](key)
     body = fetch_criteria.clean(description)
