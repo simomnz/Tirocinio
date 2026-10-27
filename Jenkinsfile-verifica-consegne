@@ -1,0 +1,128 @@
+// Delivery verification pipeline. Nobody says what to verify: the deliveries
+// are read from the smart contract, where the developer declared them with
+// submitWork. The chain cannot call out, so Jenkins goes and looks on a timer.
+
+pipeline {
+    agent any                                   // creates the workspace
+
+    triggers {
+        cron('H/5 * * * *')                     // H spreads the minute, so this does not start together with every other job
+    }
+
+    parameters {                                // configuration, not input: a timed build takes the defaults
+
+        string(
+            name: 'CONTRACT',
+            defaultValue: '0x0248781F6be9645A0F97AAaabE0950cdC1B34D5f',
+            description: 'User stories smart contract on Sepolia'
+        )
+        booleanParam(
+            name: 'WRITE_BACK',
+            defaultValue: true,                 // false = dry run, writes nothing on the task
+            description: 'Writes the report and moves the state in the project management system'
+        )
+        booleanParam(
+            name: 'SIGN_CHAIN',
+            defaultValue: true,                 // false = dry run, spends no gas
+            description: 'Records on the blockchain when every automated criterion passes'
+        )
+    }
+
+    environment {
+        CONTRACT_ADDRESS = "${params.CONTRACT}"
+
+        OP_URL       = 'http://127.0.0.1:8090'  // my local OpenProject
+        TAIGA_URL    = 'https://api.taiga.io'
+        TAIGA_SLUG   = 'simomnz-prova-api'
+        JIRA_URL     = 'https://simomnz.atlassian.net'
+        JIRA_PROJECT = 'KAN'                    // so the "KAN-" does not have to be written every time
+        SEPOLIA_RPC  = 'https://ethereum-sepolia-rpc.publicnode.com'
+
+        VENV = '/var/lib/jenkins/venv-verifica'         // outside the workspace
+        VERIFY_STATE = '/var/lib/jenkins/attempted.json'  // outside too, the workspace is wiped between builds
+    }
+
+    stages {
+
+        stage('1. Verificatore') {
+            steps {
+                echo '--- Codice del sistema di verifica ---'
+                git branch: 'main', url: 'https://github.com/simomnz/Tirocinio.git'   // git clone del codice VERIFICATORE
+            }
+        }
+
+        stage('2. Dipendenze') {
+            steps {
+                echo '--- behave e web3, nelle versioni fissate ---'
+                sh '''
+                    if [ ! -d "$VENV" ]; then       # -d for a folder, ! if it does not exist
+                        python3 -m venv "$VENV"     # created once only
+                    fi
+                    . "$VENV/bin/activate"          # . is source
+
+                    pip install --quiet -r vocabolario/requirements.txt   # -r list from a file, --quiet errors only
+                    echo "Ambiente pronto:"
+                    pip list --format=freeze | grep -E '^(behave|web3)='  # -E extended regex, ^ start of line
+                '''
+            }                                   // SINGLE quotes: no substitution, the shell resolves $VENV
+        }
+
+        stage('3. Consegne da verificare') {
+            steps {
+                withCredentials([               // credentials NOT VISIBLE
+                    string(credentialsId: 'op-token',     variable: 'OP_TOKEN'),
+                    string(credentialsId: 'taiga-user',   variable: 'TAIGA_USER'),
+                    string(credentialsId: 'taiga-pass',   variable: 'TAIGA_PASS'),
+                    string(credentialsId: 'jira-user',    variable: 'JIRA_USER'),
+                    string(credentialsId: 'jira-token',   variable: 'JIRA_TOKEN'),
+                    string(credentialsId: 'verifier-key', variable: 'VERIFIER_KEY')
+                ]) {                            // masked as ****** in the log
+                    sh '''
+                        set +x                  # set +x does not print the commands
+                        . "$VENV/bin/activate"
+                        cd vocabolario
+
+                        flags=""
+                        if [ "$WRITE_BACK" = "true" ]; then flags="$flags --write"; fi
+                        if [ "$SIGN_CHAIN" = "true" ]; then flags="$flags --chain"; fi
+
+                        waiting=$(python3 pending.py)       # the chain says what to verify
+                        if [ -z "$waiting" ]; then          # -z the string IS empty
+                            echo "Nessuna consegna da verificare"
+                            exit 0
+                        fi
+
+                        problems=0
+                        for id in $waiting; do
+                            echo "--- user story $id"
+
+                            status=0
+                            python3 verify.py --story "$id" $flags || status=$?   # || keeps set -e from aborting the loop
+
+                            if [ "$status" = "2" ]; then    # it could not even try, so it must be tried again
+                                echo "user story $id non verificabile, resta in coda"
+                                problems=1
+                            else                            # 0 passed and is recorded on chain, 1 did not pass
+                                python3 pending.py --mark "$id"   # noted, so the same delivery is not commented again every round
+                            fi
+                        done
+
+                        if [ "$problems" != "0" ]; then
+                            echo "Alcune consegne non sono state verificabili"
+                            exit 1                          # a broken system is a red build, a rejected delivery is not
+                        fi
+                    '''
+                }
+            }
+        }
+    }
+
+    post {
+        success {
+            echo 'Giro completato: le consegne trovate sono state verificate.'
+        }
+        failure {
+            echo 'Il sistema di verifica non ha potuto lavorare: il motivo e\' nel log.'
+        }
+    }
+}

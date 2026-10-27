@@ -7,302 +7,348 @@ import "./Hiring_Smart_Contract.sol";
 
 contract UserStories {
 
-    // --- chi puo' fare cosa ---
-    address public owner;          // chi ha pubblicato il contratto
-    address public verifier;       // il sistema di verifica automatica
-    address public productOwner;   // firma dopo aver revisionato il lavoro
-    address public client;         // opzionale: a zero significa "non previsto"
+    // who is allowed to do what
+    address public owner;          // published the contract
+    address public productOwner;   // signs after reviewing the work
+    address public client;         // optional, zero means "not used"
 
-    uint public dimUSList;
+    // several verifiers are allowed, so that signatures can be produced in
+    // parallel without competing for the same nonce, and so that a compromised
+    // key can be replaced without stopping the system
+    mapping(address => bool) public verifiers;
+
+    uint public userStoryCount;
 
     struct UserStory {
-        uint[] idSkills;
+        uint[] requiredSkills;
         uint effort;
-        uint payment;
-        bool status;                 // presa in carico
-        bool[3] paymentAuthorized;   // 0 verificatore, 1 Product Owner, 2 cliente
-        bool payed;
-        bool funded;                 // il denaro e' depositato nel contratto
+        uint payment;              // in wei
+        bool funded;               // the money is held by this contract
+        bool taken;                // a developer has claimed it
+        bool workSubmitted;        // the developer has declared a delivery
+        bool paid;
+        bool[3] approvals;         // 0 tests, 1 product owner, 2 client
         address developer;
-        address funder;              // chi ha depositato, per l'eventuale rimborso
-        bytes20 commit;              // il commit Git che ha superato i test
+        address funder;            // who deposited, for a possible refund
+        bytes20 commit;            // the Git commit declared by the developer
+        string externalRef;        // the task this story maps to, e.g. "openproject:1117"
     }
 
-    mapping(uint => UserStory) public US;
+    // the automatic getter skips requiredSkills and approvals, because they are arrays
+    mapping(uint => UserStory) public userStories;
 
-    // --- eventi: cosi' il mondo esterno sa cosa succede ---
-    event USFunded(uint indexed idUserStory, address funder, uint amount);
-    event USRefunded(uint indexed idUserStory, address funder, uint amount);
-    event USTaken(uint indexed idUserStory, address developer);
-    event TestsPassed(uint indexed idUserStory, bytes20 commit);
-    event PaymentAuthorized(uint indexed idUserStory, address signer, uint8 slot);
-    event PaymentSent(uint indexed idUserStory, address developer, uint amount);
+    event UserStoryFunded(uint indexed id, address funder, uint amount);
+    event UserStoryRefunded(uint indexed id, address funder, uint amount);
+    event UserStoryClaimed(uint indexed id, address developer);
+    event WorkSubmitted(uint indexed id, address developer, bytes20 commit);   // this is what starts the verification
+    event TestsPassed(uint indexed id, bytes20 commit);
+    event DeliveryApproved(uint indexed id, address signer, uint8 slot);
+    event PaymentReleased(uint indexed id, address developer, uint amount);
+    event ExternalRefSet(uint indexed id, string externalRef);
 
+    // creates the initial user stories and sets who will be allowed to sign
     constructor(
-        uint[][] memory _idSkill,
+        uint[][] memory _requiredSkills,
         uint[] memory _effort,
         uint[] memory _payment,
         address _verifier,
         address _productOwner
     ) {
         owner = msg.sender;
-        verifier = _verifier;
         productOwner = _productOwner;
-        client = address(0);
+        client = address(0);        // enabled later with setClient, if needed
+        verifiers[_verifier] = true;
 
-        dimUSList = _idSkill.length;
-        for (uint i = 0; i < dimUSList; i++) {
-            US[i].idSkills = _idSkill[i];
-            US[i].effort = _effort[i];
-            US[i].payment = _payment[i];
+        userStoryCount = _requiredSkills.length;
+        for (uint i = 0; i < userStoryCount; i++) {
+            userStories[i].requiredSkills = _requiredSkills[i];
+            userStories[i].effort = _effort[i];
+            userStories[i].payment = _payment[i];
         }
     }
 
-    modifier OnlyOwner() {
-        require(msg.sender == owner, "Solo il proprietario puo' farlo");
+    // stops anyone who is not the owner, then _ runs the function body
+    modifier onlyOwner() {
+        require(msg.sender == owner, "Only the owner can do this");
         _;
     }
 
-    // Gli indirizzi dei firmatari si possono cambiare: un sistema di verifica
-    // si sostituisce, un Product Owner cambia ruolo.
-    function setVerifier(address _verifier) public OnlyOwner {
-        verifier = _verifier;
+    modifier onlyVerifier() {
+        require(verifiers[msg.sender], "Only a verifier can do this");
+        _;
     }
 
-    function setProductOwner(address _productOwner) public OnlyOwner {
+    // ------------------------------------------------------------
+    // Roles
+    // ------------------------------------------------------------
+
+    function addVerifier(address _verifier) public onlyOwner {
+        verifiers[_verifier] = true;
+    }
+
+    function removeVerifier(address _verifier) public onlyOwner {
+        verifiers[_verifier] = false;
+    }
+
+    function setProductOwner(address _productOwner) public onlyOwner {
         productOwner = _productOwner;
     }
 
-    function setClient(address _client) public OnlyOwner {
+    function setClient(address _client) public onlyOwner {
         client = _client;
     }
 
     // ------------------------------------------------------------
-    // Deposito a garanzia
+    // Link to the project management system
     // ------------------------------------------------------------
 
-    // Il denaro viene immobilizzato nel contratto PRIMA che qualcuno lavori.
-    // L'importo deve corrispondere esattamente a quello concordato: ne' meno
-    // (lo sviluppatore verrebbe pagato meno del dovuto) ne' piu' (l'eccedenza
-    // resterebbe bloccata).
-    function fundUS(uint _idUserStory) public payable {
-        require(_idUserStory < dimUSList, "User Story inesistente");
-        require(US[_idUserStory].funded == false, "Gia' finanziata");
-        require(msg.value == US[_idUserStory].payment, "Importo non corrispondente");
-
-        US[_idUserStory].funded = true;
-        US[_idUserStory].funder = msg.sender;
-
-        emit USFunded(_idUserStory, msg.sender, msg.value);
+    // records which task this user story corresponds to, so that the mapping
+    // lives in one place instead of being written by hand on both sides
+    function setExternalRef(uint _id, string calldata _externalRef) public onlyOwner {
+        require(_id < userStoryCount, "No such user story");
+        userStories[_id].externalRef = _externalRef;
+        emit ExternalRefSet(_id, _externalRef);
     }
 
-    // Via d'uscita: chi ha depositato puo' riprendersi i fondi solo finche'
-    // nessuno ha preso in carico il lavoro. Dopo, il denaro non e' piu' suo.
-    function refundUS(uint _idUserStory) public {
-        require(US[_idUserStory].funded == true, "Non finanziata");
-        require(US[_idUserStory].status == false, "Gia' presa in carico");
-        require(US[_idUserStory].payed == false, "Gia' pagata");
-        require(msg.sender == US[_idUserStory].funder, "Non sei tu ad aver depositato");
+    // ------------------------------------------------------------
+    // Escrow
+    // ------------------------------------------------------------
 
-        uint amount = US[_idUserStory].payment;
-        US[_idUserStory].funded = false;
-        US[_idUserStory].funder = address(0);
+    // locks the money in the contract before anyone starts working
+    function fundUserStory(uint _id) public payable {
+        require(_id < userStoryCount, "No such user story");
+        require(userStories[_id].funded == false, "Already funded");
+        require(msg.value == userStories[_id].payment, "Amount does not match");   // not less, not more
+
+        userStories[_id].funded = true;
+        userStories[_id].funder = msg.sender;                  // so we know who to pay back
+
+        emit UserStoryFunded(_id, msg.sender, msg.value);
+    }
+
+    // gives the money back, but only while nobody has claimed the work
+    function refundUserStory(uint _id) public {
+        require(userStories[_id].funded == true, "Not funded");
+        require(userStories[_id].taken == false, "Already claimed");   // after this point the money is no longer the funder's
+        require(userStories[_id].paid == false, "Already paid");
+        require(msg.sender == userStories[_id].funder, "You did not fund this");
+
+        uint amount = userStories[_id].payment;
+        userStories[_id].funded = false;                       // write first, transfer after
+        userStories[_id].funder = address(0);
 
         (bool ok, ) = payable(msg.sender).call{value: amount}("");
-        require(ok, "Rimborso fallito");
+        require(ok, "Refund failed");                          // call does not revert by itself
 
-        emit USRefunded(_idUserStory, msg.sender, amount);
+        emit UserStoryRefunded(_id, msg.sender, amount);
     }
 
     // ------------------------------------------------------------
-    // Le firme
+    // Claiming the work
     // ------------------------------------------------------------
 
-    // La firma del sistema di verifica, con il commit che ha superato i test.
-    // E' l'unica automatica, e l'unica che porta con se' un dato.
-       // La firma del sistema di verifica, con il commit che ha superato i test.
-    // E' l'unica automatica, e l'unica che porta con se' un dato.
-    function authorizeTests(uint _idUserStory, bytes20 _commit) public {
-        require(msg.sender == verifier, "Solo il verificatore puo' firmare qui");
-        require(US[_idUserStory].payed == false, "Gia' pagata");
-        require(US[_idUserStory].status == true,
-                "User Story non presa in carico");
-        require(US[_idUserStory].paymentAuthorized[0] == false,
-                "Test gia' firmati");
-
-        US[_idUserStory].paymentAuthorized[0] = true;
-        US[_idUserStory].commit = _commit;
-
-        emit TestsPassed(_idUserStory, _commit);
-        emit PaymentAuthorized(_idUserStory, msg.sender, 0);
+    // asks an employment contract which skills the job requires
+    function getRequiredSkills(address employmentAddress)
+        public view returns (uint[] memory)
+    {
+        SkillSelection employmentContract = SkillSelection(employmentAddress);   // reads that address as a SkillSelection contract
+        return employmentContract.getSkillList();
     }
 
-    // La firma umana: il Product Owner, e il cliente se previsto.
-    // Il mittente decide da solo quale casella puo' firmare.
-    function authorize(uint _idUserStory) public {
-        require(US[_idUserStory].payed == false, "Gia' pagata");
+    // lists the user stories a developer could claim
+    function listAvailableUserStories(address employmentAddress)
+        public view returns (uint[] memory)
+    {
+        uint[] memory available = new uint[](userStoryCount);   // as long as all of them, filled only in part
+        uint[] memory skills = getRequiredSkills(employmentAddress);
+        uint found = 0;
+
+        for (uint id = 0; id < userStoryCount; id++) {
+            if (!userStories[id].funded || userStories[id].taken) continue;
+            if (hasAllSkills(id, skills)) {
+                available[found] = id;
+                found++;
+            }
+        }
+        return available;
+    }
+
+    // true when the given skills cover every skill the user story requires
+    function hasAllSkills(uint _id, uint[] memory skills) internal view returns (bool) {
+        uint matched = 0;
+        for (uint i = 0; i < userStories[_id].requiredSkills.length; i++) {
+            for (uint j = 0; j < skills.length; j++) {
+                if (skills[j] == userStories[_id].requiredSkills[i]) {
+                    matched++;
+                    break;                                     // skill found, move to the next one
+                }
+            }
+        }
+        return matched == userStories[_id].requiredSkills.length;   // all of them, not just some
+    }
+
+    // assigns the chosen user stories to the caller
+    function claimUserStories(address employmentAddress, uint[] memory _ids) public {
+        uint[] memory skills = getRequiredSkills(employmentAddress);
+
+        for (uint i = 0; i < _ids.length; i++) {
+            uint id = _ids[i];
+
+            // a developer can only claim work whose money is already locked in
+            // the contract: that is the guarantee, and it does not depend on trust
+            require(userStories[id].funded, "User story is not funded");
+            require(!userStories[id].taken, "User story already claimed");
+            require(hasAllSkills(id, skills), "Missing required skills");   // fails loudly instead of doing nothing
+
+            userStories[id].taken = true;
+            userStories[id].developer = msg.sender;
+            emit UserStoryClaimed(id, msg.sender);
+        }
+    }
+
+    // ------------------------------------------------------------
+    // Delivery and signatures
+    // ------------------------------------------------------------
+
+    // the developer declares which commit is the delivery, and the event this
+    // emits is what starts the verification. The commit is therefore stated by
+    // the person who signs, not chosen by whoever launches the verification
+    function submitWork(uint _id, bytes20 _commit) public {
+        require(msg.sender == userStories[_id].developer, "Not the assigned developer");
+        require(userStories[_id].paid == false, "Already paid");
+        require(userStories[_id].approvals[0] == false, "Tests already recorded");   // a new delivery is allowed until then
+
+        userStories[_id].commit = _commit;
+        userStories[_id].workSubmitted = true;
+
+        emit WorkSubmitted(_id, msg.sender, _commit);
+    }
+
+    // records that the automated criteria passed on the declared commit.
+    // It records an outcome, it does not authorise a payment
+    function recordTestsPassed(uint _id, bytes20 _commit) public onlyVerifier {
+        require(userStories[_id].paid == false, "Already paid");
+        require(userStories[_id].taken == true, "User story not claimed");
+        require(userStories[_id].workSubmitted == true, "No delivery to verify");
+        require(userStories[_id].commit == _commit, "Commit does not match the delivery");   // proves the tests ran on the declared code
+        require(userStories[_id].approvals[0] == false, "Tests already recorded");   // written once only
+
+        userStories[_id].approvals[0] = true;
+
+        emit TestsPassed(_id, _commit);
+        emit DeliveryApproved(_id, msg.sender, 0);
+    }
+
+    // a person approves the delivery: the product owner, or the client if set
+    function approveDelivery(uint _id) public {
+        require(userStories[_id].paid == false, "Already paid");
+        require(userStories[_id].approvals[0] == true, "Tests have not passed yet");   // the machine goes first, then the person
 
         uint8 slot;
         if (msg.sender == productOwner) {
             slot = 1;
-        } else if (client != address(0) && msg.sender == client) {
+        } else if (client != address(0) && msg.sender == client) {   // the client counts only when one is set
             slot = 2;
         } else {
-            revert("Non sei autorizzato a firmare");
+            revert("You are not allowed to approve");          // revert undoes the whole transaction
         }
 
-        US[_idUserStory].paymentAuthorized[slot] = true;
-        emit PaymentAuthorized(_idUserStory, msg.sender, slot);
+        userStories[_id].approvals[slot] = true;
+        emit DeliveryApproved(_id, msg.sender, slot);
     }
 
-    // La firma del cliente serve solo se il cliente esiste.
-    function isAuthorized(uint _idUserStory) public view returns (bool) {
-        if (!US[_idUserStory].paymentAuthorized[0]) return false;
-        if (!US[_idUserStory].paymentAuthorized[1]) return false;
-        if (client != address(0) && !US[_idUserStory].paymentAuthorized[2]) return false;
+    // true when every signature that is needed is in place
+    function isReadyForPayment(uint _id) public view returns (bool) {
+        if (!userStories[_id].approvals[0]) return false;
+        if (!userStories[_id].approvals[1]) return false;
+        if (client != address(0) && !userStories[_id].approvals[2]) return false;   // two signatures are enough without a client
         return true;
     }
 
-    // Serve allo sviluppatore per sapere chi manca all'appello.
-    function getAuthorizations(uint _idUserStory) public view returns (bool[3] memory) {
-        return US[_idUserStory].paymentAuthorized;
+    // returns the three boxes, to see who is still missing
+    function getApprovals(uint _id) public view returns (bool[3] memory) {
+        return userStories[_id].approvals;                     // written by hand because the automatic getter skips arrays
     }
 
     // ------------------------------------------------------------
-    // Selezione e presa in carico
+    // Reading
     // ------------------------------------------------------------
 
-    function getSkillsFromEmploymnetContract(address employmentAddress)
-        public view returns (uint[] memory validSkills)
+    // returns the skills a user story requires, which the automatic getter skips
+    function getRequiredSkillsOf(uint _id) public view returns (uint[] memory) {
+        return userStories[_id].requiredSkills;
+    }
+
+    // returns every user story in one call
+    function listAllUserStories() public view onlyOwner returns (UserStory[] memory) {
+        UserStory[] memory all = new UserStory[](userStoryCount);
+        for (uint i = 0; i < userStoryCount; i++) {
+            all[i] = userStories[i];
+        }
+        return all;
+    }
+
+    // returns the user stories assigned to one developer
+    function listUserStoriesOf(address developer)
+        public view onlyOwner returns (UserStory[] memory)
     {
-        SkillSelection employmentContract = SkillSelection(employmentAddress);
-        return (employmentContract.getSkillList());
-    }
-
-    function getAvailableUSList(address employmentAddress)
-        public view returns (uint[] memory)
-    {
-        uint[] memory validUS = new uint[](dimUSList);
-        uint[] memory employSkills = getSkillsFromEmploymnetContract(employmentAddress);
-        uint validUSIndex = 0;
-
-        for (uint usIndex = 0; usIndex < dimUSList; usIndex++) {
-            // una user story non finanziata o gia' presa non e' disponibile
-            if (!US[usIndex].funded || US[usIndex].status) continue;
-
-            uint counter = 0;
-            for (uint i = 0; i < US[usIndex].idSkills.length; i++) {
-                uint currentSkill = US[usIndex].idSkills[i];
-                for (uint j = 0; j < employSkills.length; j++) {
-                    if (employSkills[j] == currentSkill) {
-                        counter++;
-                        break;
-                    }
-                }
-            }
-            if (counter == US[usIndex].idSkills.length) {
-                validUS[validUSIndex] = usIndex;
-                validUSIndex++;
-            }
-        }
-        return validUS;
-    }
-
-    function USSelection(address employmentAddress, uint[] memory _idSelected) public {
-        uint[] memory employSkills = getSkillsFromEmploymnetContract(employmentAddress);
-
-        for (uint i = 0; i < _idSelected.length; i++) {
-            uint targetId = _idSelected[i];
-
-            // Lo sviluppatore puo' prendere in carico solo lavoro gia' pagato
-            // nel contratto: e' la sua garanzia, e non deve fidarsi di nessuno
-            // per averla.
-            require(US[targetId].funded, "User Story non finanziata");
-            require(!US[targetId].status, "User Story gia' presa in carico");
-
-            uint counter = 0;
-            for (uint k = 0; k < US[targetId].idSkills.length; k++) {
-                for (uint j = 0; j < employSkills.length; j++) {
-                    if (employSkills[j] == US[targetId].idSkills[k]) {
-                        counter++;
-                        break;
-                    }
-                }
-            }
-
-            if (counter == US[targetId].idSkills.length) {
-                US[targetId].status = true;
-                US[targetId].developer = msg.sender;
-                emit USTaken(targetId, msg.sender);
-            }
-        }
-    }
-
-    function getTotalUSList() public view OnlyOwner returns (UserStory[] memory) {
-        UserStory[] memory us = new UserStory[](dimUSList);
-        for (uint i = 0; i < dimUSList; i++) {
-            us[i] = US[i];
-        }
-        return (us);
-    }
-
-    function getAddressUSList(address developer)
-        public view OnlyOwner returns (UserStory[] memory)
-    {
-        uint dimUSListAddress = 0;
-        for (uint i = 0; i < dimUSList; i++) {
-            if (developer == US[i].developer) {
-                dimUSListAddress++;
-            }
+        uint count = 0;
+        for (uint i = 0; i < userStoryCount; i++) {            // first pass counts, because the length must be known up front
+            if (developer == userStories[i].developer) count++;
         }
 
-        UserStory[] memory usAddress = new UserStory[](dimUSListAddress);
-        uint counter = 0;
-        for (uint i = 0; i < dimUSList; i++) {
-            if (developer == US[i].developer) {
-                usAddress[counter] = US[i];
-                counter++;
+        UserStory[] memory result = new UserStory[](count);
+        uint k = 0;
+        for (uint i = 0; i < userStoryCount; i++) {            // second pass fills
+            if (developer == userStories[i].developer) {
+                result[k] = userStories[i];
+                k++;
             }
         }
-        return (usAddress);
+        return result;
     }
 
-    function addUS(uint[] memory _idSkill, uint _effort, uint _payment)
-        public OnlyOwner returns (uint)
-    {
-        US[dimUSList].idSkills = _idSkill;
-        US[dimUSList].effort = _effort;
-        US[dimUSList].payment = _payment;
-        dimUSList++;
-        return (dimUSList);
+    // adds a user story after the contract has been published
+    function addUserStory(
+        uint[] memory _requiredSkills,
+        uint _effort,
+        uint _payment,
+        string calldata _externalRef
+    ) public onlyOwner returns (uint) {
+        uint id = userStoryCount;                              // the new identifier is the current count
+        userStories[id].requiredSkills = _requiredSkills;
+        userStories[id].effort = _effort;
+        userStories[id].payment = _payment;
+        userStories[id].externalRef = _externalRef;
+        userStoryCount++;
+        emit ExternalRefSet(id, _externalRef);
+        return id;                                             // the identifier, not the new total
     }
 
     // ------------------------------------------------------------
-    // Pagamento
+    // Payment
     // ------------------------------------------------------------
 
-    // Non e' piu' payable: i fondi sono gia' nel contratto dal momento del
-    // deposito, chi chiama non deve portare denaro.
-    function sendPayment(uint _idUserStory) public {
-        require(US[_idUserStory].payed == false, "Gia' pagato");
-        require(US[_idUserStory].funded == true, "Non finanziata");
-        require(isAuthorized(_idUserStory), "Mancano autorizzazioni");
+    // pays the developer out of the money already held by the contract
+    function releasePayment(uint _id) public {                 // not payable: the caller brings no money
+        require(userStories[_id].paid == false, "Already paid");
+        require(userStories[_id].funded == true, "Not funded");
+        require(isReadyForPayment(_id), "Missing approvals");
         require(
-            US[_idUserStory].developer == msg.sender || owner == msg.sender,
-            "Non sei autorizzato a riscuotere"
+            userStories[_id].developer == msg.sender || owner == msg.sender,   // the developer is paid either way
+            "You are not allowed to collect this"
         );
 
-        // si scrive prima e si trasferisce dopo: difesa contro il rientro
-        US[_idUserStory].payed = true;
+        userStories[_id].paid = true;                          // write first, transfer after, or it could be called again
 
-        uint amount = US[_idUserStory].payment;
-        address devAddress = US[_idUserStory].developer;
+        uint amount = userStories[_id].payment;
+        address developer = userStories[_id].developer;
 
-        // call e non transfer: transfer concede solo 2300 di gas e fallirebbe
-        // se lo sviluppatore riceve su un portafoglio che e' un contratto
-        (bool ok, ) = payable(devAddress).call{value: amount}("");
-        require(ok, "Trasferimento fallito");
+        // call and not transfer: transfer only forwards 2300 gas and would fail
+        // when the developer receives on a contract wallet
+        (bool ok, ) = payable(developer).call{value: amount}("");
+        require(ok, "Transfer failed");
 
-        emit PaymentSent(_idUserStory, devAddress, amount);
+        emit PaymentReleased(_id, developer, amount);
     }
 }

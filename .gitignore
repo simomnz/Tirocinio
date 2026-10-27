@@ -19,3 +19,7 @@ __pycache__/
 .deps/
 .states/
 .workspaces/
+
+# Stato locale del sorvegliante e dell'ascoltatore
+vocabolario/attempted.json
+vocabolario/last-block.txt

@@ -1,4 +1,4 @@
-# Il vocabolario: ogni frase del documento ha qui sotto la funzione che la esegue.
+# Il vocabolario, ogni frase di Vocabolary.md corrisponde a una funzione di questo file.
 
 import importlib.util
 import json
@@ -10,37 +10,46 @@ import urllib.request
 
 from behave import given, when, then
 
-# Normalmente il codice sta due livelli sopra questo file. Quando invece e' il
-# verificatore a eseguire, il codice arriva da GitHub e la sua cartella viene
-# passata da fuori con CODE_ROOT.
+# In locale il codice sta due directory sopra, uqando il codice arriva da GitHub la sua cartella viene passata da fuori con CODE_ROOT.
 ROOT = os.environ.get("CODE_ROOT") or os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", ".."))
 
+#{nome}	 	    stringa
+#{nome:d}		int
+#{nome:f}		float
 
-# ------------------------------------------------------------
+
+
+
 # Appoggio
-# ------------------------------------------------------------
+
 
 def field(context, name):
-    """Legge un campo dall'intestazione della user story."""
+    """Legge un campo nell'intestazione della user story."""
     for line in context.feature.description:
         text = line.strip()
-        if text.startswith(name + ":"):
-            return text.split(":", 1)[1].strip()
-    raise AssertionError("missing field " + name + " in the header")
+        if text.startswith(name + ":"):       # cerca il Module
+            return text.split(":", 1)[1].strip()    # ,1 per evitare divisioni in LINK 
+    raise AssertionError("missing field " + name + " in the header")    # errore se non trova nulla
 
 
 def load_module(path):
-    spec = importlib.util.spec_from_file_location("under_test", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
+    spec = importlib.util.spec_from_file_location("under_test", path)   #under_test OBBLIGATORIO
+    module = importlib.util.module_from_spec(spec)      #modulo vuoto
+    spec.loader.exec_module(module)     #esegue il modulo e lo riempie
     return module
 
 
 def absolute_paths(command):
-    """I file .py vanno cercati nella radice, non nella cartella temporanea."""
-    return [os.path.join(ROOT, p) if p.endswith(".py") else p
-            for p in command.split()]
+    pezzi = command.split()        # split del commando bash, "python3 esercizi.py" diventa ["python3", "esercizi.py"]
+    risultato = []
+    for p in pezzi:
+        if p.endswith(".py"):
+            risultato.append(os.path.join(ROOT, p))   # diventa /tmp/verify-xxxx/code/esercizi.py
+        else:
+            risultato.append(p)                       # python3 rimane identico
+    return risultato
+
 
 
 # ------------------------------------------------------------
