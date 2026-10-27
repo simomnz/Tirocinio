@@ -29,6 +29,7 @@ JENKINS_TOKEN = os.environ.get("JENKINS_TOKEN", "")      # an API token, not the
 JENKINS_JOB   = os.environ.get("JENKINS_JOB", "verifica-consegne")
 
 INTERVAL = int(os.environ.get("LISTEN_INTERVAL", "5"))   # seconds between one question and the next
+WINDOW = int(os.environ.get("LISTEN_WINDOW", "10"))      # blocks per question: nodes cap the range, and a bounded question is served everywhere
 CURSOR = os.environ.get("LISTEN_CURSOR", os.path.join(HERE, "last-block.txt"))
 KNOWN = os.environ.get("LISTEN_KNOWN", os.path.join(HERE, "contracts-seen.json"))
 
@@ -120,10 +121,12 @@ def main():
         try:
             latest = w3.eth.block_number
 
-            if latest >= cursor:
+            while cursor <= latest:
+                last = min(cursor + WINDOW - 1, latest)   # one window at a time, so a long catch up does not ask too much at once
+
                 logs = w3.eth.get_logs({                  # one question, whatever the number of contracts
                     "fromBlock": cursor,
-                    "toBlock": latest,
+                    "toBlock": last,
                     "topics": [TOPIC],
                 })
 
@@ -140,11 +143,11 @@ def main():
                         waiting.append(address)           # one build per contract, however many deliveries it holds
 
                 for address in waiting:
-                    print("Delivery on " + address + ", block " + str(latest))
+                    print("Delivery on " + address + ", block " + str(last))
                     print("Jenkins answered " + str(start_build(address)))
 
-                cursor = latest + 1
-                save_cursor(cursor)
+                cursor = last + 1
+                save_cursor(cursor)                       # saved window by window, so an interruption loses nothing
 
         except Exception as error:            # a node hiccup or a restart of Jenkins must not kill the process
             print("Nothing done this round: " + str(error), file=sys.stderr)
