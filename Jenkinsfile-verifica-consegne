@@ -5,31 +5,25 @@
 pipeline {
     agent any                                   // creates the workspace
 
-    triggers {
-        cron('H/5 * * * *')                     // H spreads the minute, so this does not start together with every other job
-    }
+    // no timer: the listener starts this job when a delivery appears on the
+    // chain, and picks up where it left off if it was down
 
-    parameters {                                // configuration, not input: a timed build takes the defaults
-
+    parameters {
+        // filled by the listener, which found the contract on the chain, not
+        // by a person. A wrong value is harmless: the job refuses to work for
+        // a contract that has not named this verifier
         string(
             name: 'CONTRACT',
-            defaultValue: '0x0248781F6be9645A0F97AAaabE0950cdC1B34D5f',
-            description: 'User stories smart contract on Sepolia'
-        )
-        booleanParam(
-            name: 'WRITE_BACK',
-            defaultValue: true,                 // false = dry run, writes nothing on the task
-            description: 'Writes the report and moves the state in the project management system'
-        )
-        booleanParam(
-            name: 'SIGN_CHAIN',
-            defaultValue: true,                 // false = dry run, spends no gas
-            description: 'Records on the blockchain when every automated criterion passes'
+            defaultValue: '',
+            description: 'User stories contract that declared the delivery'
         )
     }
 
     environment {
         CONTRACT_ADDRESS = "${params.CONTRACT}"
+
+        WRITE_BACK = 'true'                     // false here = dry run, writes nothing and spends no gas
+        SIGN_CHAIN = 'true'
 
         OP_URL       = 'http://127.0.0.1:8090'  // my local OpenProject
         TAIGA_URL    = 'https://api.taiga.io'
@@ -125,4 +119,5 @@ pipeline {
             echo 'Il sistema di verifica non ha potuto lavorare: il motivo e\' nel log.'
         }
     }
+
 }

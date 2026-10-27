@@ -38,6 +38,10 @@ def save_state(state):
 # the user stories with a delivery nobody has verified yet
 def pending():
     _, contract = blockchain.connect()
+
+    if not blockchain.is_invited(contract):   # whoever started the job cannot point it at a contract that did not ask
+        raise RuntimeError("This contract does not list us as a verifier")
+
     count = contract.functions.userStoryCount().call()
     state = load_state()
 
@@ -72,20 +76,22 @@ def mark(story_id):
 
 
 def main():
-    if not blockchain.CONTRACT_ADDRESS:
-        print("CONTRACT_ADDRESS not set", file=sys.stderr)
+    try:
+        if "--mark" in sys.argv:
+            position = sys.argv.index("--mark") + 1
+            if position >= len(sys.argv):
+                print("--mark needs the identifier on the chain", file=sys.stderr)
+                return 2
+            mark(sys.argv[position])
+            return 0
+
+        for story_id in pending():
+            print(story_id)                   # one per line, so the shell can loop on it
+
+    except Exception as error:                # one line instead of forty of traceback
+        print(str(error), file=sys.stderr)
         return 2
 
-    if "--mark" in sys.argv:
-        position = sys.argv.index("--mark") + 1
-        if position >= len(sys.argv):
-            print("--mark needs the identifier on the chain", file=sys.stderr)
-            return 2
-        mark(sys.argv[position])
-        return 0
-
-    for story_id in pending():
-        print(story_id)                       # one per line, so the shell can loop on it
     return 0
 
 

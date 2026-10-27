@@ -5,16 +5,34 @@ import json
 import os
 import sys
 
+from eth_account import Account
 from web3 import Web3
 
-# configuration from the environment
+HERE = os.path.dirname(os.path.abspath(__file__))
+
 RPC = os.environ.get("SEPOLIA_RPC", "https://ethereum-sepolia-rpc.publicnode.com")   # public Ethereum node
-VERIFIER_KEY = os.environ.get("VERIFIER_KEY", "")                      # empty when missing, so the check below catches it
-CONTRACT_ADDRESS = os.environ.get("CONTRACT_ADDRESS", "")
+VERIFIER_KEY = os.environ.get("VERIFIER_KEY", "")        # empty when missing, so the checks below catch it
+
+
+# which contract to work on. The listener finds the contracts by itself and
+# says which one, so this is only a convenience for commands run by hand
+def configured_address():
+    from_environment = os.environ.get("CONTRACT_ADDRESS", "").strip()
+    if from_environment:
+        return from_environment
+
+    try:
+        with open(os.path.join(HERE, "..", "contracts", "address.txt"),
+                  encoding="utf-8") as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        return ""
+
+
+CONTRACT_ADDRESS = configured_address()
 
 # the ABI comes from the compiler, not written by hand: one source of truth,
 # so it cannot drift away from the contract it describes
-HERE = os.path.dirname(os.path.abspath(__file__))
 ABI_PATH = os.environ.get(
     "CONTRACT_ABI",
     os.path.join(HERE, "..", "contracts", "UserStories_SC.abi.json"))
@@ -24,9 +42,26 @@ with open(ABI_PATH, encoding="utf-8") as f:
 
 
 # writes raw bytes as hexadecimal with the 0x in front, which hex() drops
-# and which both Etherscan and Remix expect
 def prefixed(value):
     return "0x" + value.hex()
+
+
+# the account the verifier signs with, worked out from the key without
+# touching the network
+def verifier_address():
+    if not VERIFIER_KEY:
+        raise RuntimeError("VERIFIER_KEY not set")
+    return Account.from_key(VERIFIER_KEY).address
+
+
+# the topic every log of that event carries. Listening by topic instead of by
+# address means one filter covers every contract on the chain, so no list of
+# clients has to be kept anywhere
+def event_topic(name):
+    entry = next(e for e in ABI
+                 if e.get("type") == "event" and e.get("name") == name)
+    signature = name + "(" + ",".join(i["type"] for i in entry["inputs"]) + ")"
+    return Web3.keccak(text=signature)
 
 
 # turns a Git commit into the twenty bytes the contract stores
@@ -38,15 +73,26 @@ def to_bytes20(commit):
 
 
 # opens the connection and builds the local contract object
-def connect():
+def connect(address=None):
     w3 = Web3(Web3.HTTPProvider(RPC))         # local object, talks to nobody yet
     if not w3.is_connected():                 # this one does call the node
         raise RuntimeError("Cannot reach the node: " + RPC)
 
+    target = address or CONTRACT_ADDRESS
+    if not target:
+        raise RuntimeError("No contract to work on")
+
     contract = w3.eth.contract(
-        address=Web3.to_checksum_address(CONTRACT_ADDRESS),   # the mixed case is a checksum against typos
+        address=Web3.to_checksum_address(target),   # the mixed case is a checksum against typos
         abi=ABI)
     return w3, contract
+
+
+# true when the contract itself lists this verifier. The permission lives in
+# the contract, so a company that wants its deliveries verified calls
+# addVerifier once and nothing is configured on this side
+def is_invited(contract):
+    return contract.functions.verifiers(verifier_address()).call()
 
 
 # reads a user story and returns it by field name instead of by position,
@@ -60,11 +106,12 @@ def read_story(contract, story_id):
 
 # returns what the developer declared on chain for a user story:
 # which task it maps to, and which commit is the delivery
-def get_delivery(story_id):
-    if not CONTRACT_ADDRESS:
-        raise RuntimeError("CONTRACT_ADDRESS not set")
+def get_delivery(story_id, address=None):
+    _, contract = connect(address)
 
-    _, contract = connect()
+    if not is_invited(contract):              # refuses to work for a contract that did not ask
+        raise RuntimeError("This contract does not list us as a verifier")
+
     story = read_story(contract, int(story_id))
 
     if not story["workSubmitted"]:
@@ -81,12 +128,13 @@ def get_delivery(story_id):
             "developer": story["developer"]}
 
 
-def record_tests_passed(story_id, commit):
-    if not VERIFIER_KEY or not CONTRACT_ADDRESS:        # an empty string is false in Python
-        raise RuntimeError("VERIFIER_KEY or CONTRACT_ADDRESS not set")
-
+def record_tests_passed(story_id, commit, address=None):
     story_id = int(story_id)                  # arrives as a string from the command line
-    w3, contract = connect()
+    w3, contract = connect(address)
+
+    if not is_invited(contract):
+        print("This contract does not list us as a verifier, nothing recorded")
+        return None
 
     # free checks, before spending anything. These mirror the contract's own
     # requires: in Python they save gas, in Solidity they enforce the rule
