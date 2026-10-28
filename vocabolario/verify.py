@@ -24,6 +24,11 @@ import report
 
 VERIFIER = os.path.dirname(os.path.abspath(__file__))   # this file's folder, where the vocabulary and the configuration live
 
+RUNNER = os.environ.get("VERIFY_RUNNER", "docker")      # podman takes the same arguments
+IMAGE = os.environ.get("VERIFY_IMAGE", "verifica-criteri:1")
+TIMEOUT = int(os.environ.get("VERIFY_TIMEOUT", "600"))  # seconds, against a delivery that never ends
+SANDBOX = os.environ.get("VERIFY_SANDBOX", "on") != "off"   # off runs on this machine, for trying things out only
+
 
 # picks the repository holding the delivered code
 def repository_for(system, project, body, requested):
@@ -80,6 +85,52 @@ def clone_at(repository, folder, commit):
         if done.returncode != 0:
             return False, "The declared commit is not in the repository: " + commit
     return True, ""
+
+
+# runs the criteria inside a throwaway container. The delivered code is
+# written by somebody else and is run here, so it gets a machine of its own:
+# no network out, no privileges, a time and memory ceiling, and the only
+# folder it can see is the temporary one
+def run_in_sandbox(work, code):
+    name = "verify-" + str(os.getpid())
+    command = [
+        RUNNER, "run", "--rm", "--name", name,
+        "--network", "none",                            # loopback still works, the outside does not
+        "--user", str(os.getuid()) + ":" + str(os.getgid()),   # the files it writes belong to us, not to root
+        "--memory", "512m", "--cpus", "1", "--pids-limit", "256",
+        "--read-only", "--tmpfs", "/tmp:rw,size=64m",   # the image itself cannot be changed
+        "--volume", work + ":/work:Z",                  # Z relabels the folder for SELinux, which otherwise denies the container
+
+        "--workdir", "/work",
+        "--env", "CODE_ROOT=/work/code",                # the path inside the container, not the one outside
+        "--env", "HOME=/tmp",
+        "--env", "PYTHONDONTWRITEBYTECODE=1",
+        IMAGE,
+        "behave", "-f", "json", "-o", "/work/outcome.json",
+    ]
+
+    try:
+        return subprocess.run(command, capture_output=True, text=True,
+                              timeout=TIMEOUT)
+    except subprocess.TimeoutExpired:
+        subprocess.run([RUNNER, "kill", name], capture_output=True)   # the container outlives the client that started it
+        return subprocess.CompletedProcess(
+            command, 1, "",
+            "The criteria did not finish within " + str(TIMEOUT) + " seconds")
+
+
+# runs them straight on this machine. Only for trying things out: here the
+# delivered code has whatever the user running it has
+def run_without_sandbox(work, code):
+    environment = {
+        "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
+        "HOME": os.environ.get("HOME", "/tmp"),     # kept: Python finds the installed packages starting from here
+        "LANG": os.environ.get("LANG", "C.UTF-8"),  # without it Python reads the files as ASCII
+        "CODE_ROOT": code,
+    }
+    return subprocess.run(["behave", "-f", "json", "-o", os.path.join(work, "outcome.json")],
+                          cwd=work, env=environment,
+                          capture_output=True, text=True, timeout=TIMEOUT)
 
 
 def main():
@@ -168,11 +219,11 @@ def main():
             f.write("Feature: " + title + "\n\n" + body + "\n")
 
         # --- running ---
-        environment = dict(os.environ, CODE_ROOT=code)  # tells the vocabulary where the code under test is
         outcome = os.path.join(work, "outcome.json")
-        run = subprocess.run(["behave", "-f", "json", "-o", outcome],
-                             cwd=work, env=environment,
-                             capture_output=True, text=True)   # the json is read, not the screen output, which changes between versions
+        if SANDBOX:
+            run = run_in_sandbox(work, code)
+        else:
+            run = run_without_sandbox(work, code)       # the json is read, not the screen output, which changes between versions
 
         if not os.path.exists(outcome):                 # no report means behave could not even read the criteria
             print("behave could not run the criteria:", file=sys.stderr)

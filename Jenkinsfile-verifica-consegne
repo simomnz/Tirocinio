@@ -25,6 +25,8 @@ pipeline {
         WRITE_BACK = 'true'                     // false here = dry run, writes nothing and spends no gas
         SIGN_CHAIN = 'true'
 
+        VERIFY_IMAGE = 'verifica-criteri:1'     // the delivered code runs in here, never on this machine
+
         OP_URL       = 'http://127.0.0.1:8090'  // my local OpenProject
         TAIGA_URL    = 'https://api.taiga.io'
         TAIGA_SLUG   = 'simomnz-prova-api'
@@ -61,7 +63,16 @@ pipeline {
             }                                   // SINGLE quotes: no substitution, the shell resolves $VENV
         }
 
-        stage('3. Consegne da verificare') {
+        stage('3. Sandbox') {
+            steps {
+                echo '--- immagine in cui gira il codice consegnato ---'
+                sh '''
+                    docker build --quiet -t "$VERIFY_IMAGE" sandbox/   # already built means a few seconds, the layers are cached
+                '''
+            }
+        }
+
+        stage('4. Consegne da verificare') {
             steps {
                 withCredentials([               // credentials NOT VISIBLE
                     string(credentialsId: 'op-token',     variable: 'OP_TOKEN'),
