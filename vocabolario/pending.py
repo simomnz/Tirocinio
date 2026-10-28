@@ -22,6 +22,13 @@ STATE = os.environ.get(
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "attempted.json"))
 
 
+# the key of a delivery in the note. The identifier alone is not enough:
+# every contract numbers its user stories from zero, so the same number
+# belongs to a different delivery on each of them
+def key_for(contract, story_id):
+    return contract.address.lower() + ":" + str(story_id)
+
+
 def load_state():
     try:
         with open(STATE, encoding="utf-8") as f:
@@ -56,10 +63,12 @@ def pending():
         if contract.functions.getApprovals(story_id).call()[0]:
             continue                          # the tests are already recorded on chain
 
-        if ":" not in story["externalRef"]:
-            continue                          # nobody has linked it to a task yet, so there are no criteria to run
+        if ":" not in story["externalRef"]:   # nobody has linked it to a task yet, so there are no criteria to run
+            print("User story " + str(story_id) + " has a delivery but no task "
+                  "linked to it, skipped", file=sys.stderr)   # said out loud: it is a mistake somebody has to fix
+            continue
 
-        if state.get(str(story_id)) == story["commit"].hex():
+        if state.get(key_for(contract, story_id)) == story["commit"].hex():
             continue                          # this very delivery was already tried
 
         waiting.append(story_id)
@@ -74,7 +83,7 @@ def mark(story_id):
     story = blockchain.read_story(contract, int(story_id))
 
     state = load_state()
-    state[str(story_id)] = story["commit"].hex()
+    state[key_for(contract, story_id)] = story["commit"].hex()
     save_state(state)
 
 
