@@ -81,6 +81,8 @@ def connect(address=None):
     target = address or CONTRACT_ADDRESS
     if not target:
         raise RuntimeError("No contract to work on")
+    if not Web3.is_address(target):            # says so plainly instead of failing deep inside the encoder
+        raise RuntimeError("Not a contract address: " + repr(target))
 
     contract = w3.eth.contract(
         address=Web3.to_checksum_address(target),   # the mixed case is a checksum against typos

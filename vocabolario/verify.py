@@ -25,7 +25,7 @@ import report
 VERIFIER = os.path.dirname(os.path.abspath(__file__))   # this file's folder, where the vocabulary and the configuration live
 
 RUNNER = os.environ.get("VERIFY_RUNNER", "docker")      # podman takes the same arguments
-IMAGE = os.environ.get("VERIFY_IMAGE", "verifica-criteri:1")
+IMAGE = os.environ.get("VERIFY_IMAGE", "criteria-sandbox:1")
 TIMEOUT = int(os.environ.get("VERIFY_TIMEOUT", "600"))  # seconds, against a delivery that never ends
 SANDBOX = os.environ.get("VERIFY_SANDBOX", "on") != "off"   # off runs on this machine, for trying things out only
 
