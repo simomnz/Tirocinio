@@ -169,20 +169,20 @@ def record_tests_passed(story_id, commit, criteria, address=None):
         return None                           # the box is written once only
 
     # the commit the developer declared on chain, which is the one that must be verified
+    # from here on a mismatch is raised and not reported: it means the
+    # delivery and what was verified have come apart, and somebody has to look
     declared = to_bytes20(commit)
     if story["commit"] != declared:
-        print("The verified commit does not match the declared delivery")
-        print("  declared " + story["commit"].hex())
-        print("  verified " + declared.hex())
-        return None
+        raise RuntimeError("The verified commit does not match the declared delivery:"
+                           " declared " + story["commit"].hex() +
+                           ", verified " + declared.hex())
 
     # the criteria the contract froze before the work started
     frozen = story["criteriaHash"]
     if frozen != bytes(32) and frozen != criteria:
-        print("The criteria that were run are not the ones agreed on chain")
-        print("  agreed " + prefixed(frozen))
-        print("  run    " + prefixed(criteria))
-        return None
+        raise RuntimeError("These are not the criteria agreed on chain:"
+                           " agreed " + prefixed(frozen) +
+                           ", run " + prefixed(criteria))
 
     # the signature, which costs gas
     account = w3.eth.account.from_key(VERIFIER_KEY)     # the address comes from the key, locally
