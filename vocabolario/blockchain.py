@@ -107,10 +107,10 @@ def is_invited(contract):
 # reads a user story and returns it by field name instead of by position,
 # so that adding a field to the struct cannot silently shift the values
 def read_story(contract, story_id):
-    outputs = next(entry["outputs"] for entry in ABI
-                   if entry.get("name") == "userStories")
-    values = contract.functions.userStories(story_id).call()
-    return {out["name"]: value for out, value in zip(outputs, values)}
+    fields = next(entry["outputs"][0]["components"] for entry in ABI
+                  if entry.get("name") == "getUserStory")
+    values = contract.functions.getUserStory(story_id).call()
+    return {field["name"]: value for field, value in zip(fields, values)}
 
 
 # returns what the developer declared on chain for a user story:

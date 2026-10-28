@@ -19,6 +19,16 @@ contract UserStories {
 
     uint public userStoryCount;
 
+    // how long the product owner has to review, counted from the moment the
+    // automated criteria were recorded. After that the silence counts as a
+    // yes and the developer can collect: a stalemate must not freeze the money
+    uint public constant REVIEW_WINDOW = 14 days;
+
+    // how long a developer has to deliver: effort is a class, one week each,
+    // so 1 is a week and 3 are three. After that he can no longer deliver,
+    // and the money stays in the contract: it only ever moves forward
+    uint public constant WEEKS_PER_EFFORT = 1 weeks;
+
     struct UserStory {
         uint[] requiredSkills;
         uint effort;
@@ -30,17 +40,22 @@ contract UserStories {
         bool[3] approvals;         // 0 tests, 1 product owner, 2 client
         address developer;
         address funder;            // who deposited, for a possible refund
+        uint claimedAt;            // when a developer took it, zero when free
+        uint testsPassedAt;        // when the automated criteria were recorded
         bytes20 commit;            // the Git commit declared by the developer
         bytes32 criteriaHash;      // keccak of the acceptance criteria, frozen before the work starts
         string externalRef;        // the task this story maps to, e.g. "openproject:1117"
     }
 
-    // the automatic getter skips requiredSkills and approvals, because they are arrays
-    mapping(uint => UserStory) public userStories;
+    // not public: the automatic getter returns the fields one by one, and with
+    // this many it no longer fits. getUserStory returns the whole thing, and
+    // brings along requiredSkills and approvals, which that getter skipped
+    mapping(uint => UserStory) internal userStories;
 
     event UserStoryFunded(uint indexed id, address funder, uint amount);
     event UserStoryRefunded(uint indexed id, address funder, uint amount);
     event UserStoryClaimed(uint indexed id, address developer);
+    event ClaimExpired(uint indexed id, address developer);
     event WorkSubmitted(uint indexed id, address developer, bytes20 commit);   // this is what starts the verification
     event TestsPassed(uint indexed id, bytes20 commit, bytes32 criteriaHash);
     event CriteriaHashSet(uint indexed id, bytes32 criteriaHash);
@@ -132,6 +147,8 @@ contract UserStories {
         require(_id < userStoryCount, "No such user story");
         require(userStories[_id].funded == false, "Already funded");
         require(msg.value == userStories[_id].payment, "Amount does not match");   // not less, not more
+        require(userStories[_id].criteriaHash != bytes32(0),
+                "The acceptance criteria have not been frozen");   // money goes in last, when what has to be done is settled
 
         userStories[_id].funded = true;
         userStories[_id].funder = msg.sender;                  // so we know who to pay back
@@ -177,7 +194,7 @@ contract UserStories {
         uint found = 0;
 
         for (uint id = 0; id < userStoryCount; id++) {
-            if (!userStories[id].funded || userStories[id].taken) continue;
+            if (!isAvailable(id)) continue;
             if (hasAllSkills(id, skills)) {
                 available[found] = id;
                 found++;
@@ -210,13 +227,52 @@ contract UserStories {
             // a developer can only claim work whose money is already locked in
             // the contract: that is the guarantee, and it does not depend on trust
             require(userStories[id].funded, "User story is not funded");
-            require(!userStories[id].taken, "User story already claimed");
+            require(isAvailable(id), "User story already claimed");   // being funded already implies frozen criteria
             require(hasAllSkills(id, skills), "Missing required skills");   // fails loudly instead of doing nothing
 
             userStories[id].taken = true;
             userStories[id].developer = msg.sender;
+            userStories[id].claimedAt = block.timestamp;   // starts the clock for the delivery
             emit UserStoryClaimed(id, msg.sender);
         }
+    }
+
+    // true when the developer who took it has run out of time without
+    // delivering. From that moment he can no longer deliver, and the product
+    // owner can reopen the user story
+    function claimExpired(uint _id) public view returns (bool) {
+        if (!userStories[_id].taken) return false;
+        if (userStories[_id].workSubmitted) return false;   // delivered in time, the verifier has it now
+        if (userStories[_id].effort == 0) return false;     // no class, no clock
+
+        return block.timestamp > userStories[_id].claimedAt +
+                                 userStories[_id].effort * WEEKS_PER_EFFORT;
+    }
+
+    // true when somebody can take this user story right now. An expired claim
+    // does not put it back by itself: the criteria have been seen by the
+    // developer who dropped it, so the product owner reopens it on purpose
+    function isAvailable(uint _id) public view returns (bool) {
+        if (!userStories[_id].funded) return false;
+        if (userStories[_id].paid) return false;
+        return !userStories[_id].taken;
+    }
+
+    // puts an abandoned user story back on the market, with the criteria
+    // stated again. They can be the same ones, but saying so is a decision
+    // and it is written on the chain
+    function reopenUserStory(uint _id, bytes32 _criteriaHash) public onlyOwner {
+        require(claimExpired(_id), "The developer still has time");
+        require(_criteriaHash != bytes32(0), "The criteria must be stated again");
+
+        address previous = userStories[_id].developer;
+        userStories[_id].taken = false;
+        userStories[_id].developer = address(0);
+        userStories[_id].claimedAt = 0;
+        userStories[_id].criteriaHash = _criteriaHash;
+
+        emit ClaimExpired(_id, previous);
+        emit CriteriaHashSet(_id, _criteriaHash);
     }
 
     // ------------------------------------------------------------
@@ -228,6 +284,7 @@ contract UserStories {
     // the person who signs, not chosen by whoever launches the verification
     function submitWork(uint _id, bytes20 _commit) public {
         require(msg.sender == userStories[_id].developer, "Not the assigned developer");
+        require(claimExpired(_id) == false, "Your time to deliver has run out");
         require(userStories[_id].paid == false, "Already paid");
         require(userStories[_id].approvals[0] == false, "Tests already recorded");   // a new delivery is allowed until then
 
@@ -248,14 +305,13 @@ contract UserStories {
         require(userStories[_id].commit == _commit, "Commit does not match the delivery");   // proves the tests ran on the declared code
         require(userStories[_id].approvals[0] == false, "Tests already recorded");   // written once only
 
-        // when the criteria were frozen, the ones that were run must be those.
-        // Left at zero the check does not apply, so older user stories still work
-        if (userStories[_id].criteriaHash != bytes32(0)) {
-            require(userStories[_id].criteriaHash == _criteriaHash,
-                    "These are not the agreed criteria");
-        }
+        // the criteria that were run must be the ones frozen before the work
+        // started. They cannot be missing: without them nobody could claim it
+        require(userStories[_id].criteriaHash == _criteriaHash,
+                "These are not the agreed criteria");
 
         userStories[_id].approvals[0] = true;
+        userStories[_id].testsPassedAt = block.timestamp;   // starts the clock for the review
 
         emit TestsPassed(_id, _commit, _criteriaHash);
         emit DeliveryApproved(_id, msg.sender, 0);
@@ -279,11 +335,20 @@ contract UserStories {
         emit DeliveryApproved(_id, msg.sender, slot);
     }
 
-    // true when every signature that is needed is in place
+    // true when the people who had to review have run out of time
+    function reviewExpired(uint _id) public view returns (bool) {
+        if (userStories[_id].testsPassedAt == 0) return false;      // the clock has not started
+        return block.timestamp > userStories[_id].testsPassedAt + REVIEW_WINDOW;
+    }
+
+    // true when every signature that is needed is in place, or the time to
+    // give it has run out. The tests are never waived: that one is the machine
     function isReadyForPayment(uint _id) public view returns (bool) {
         if (!userStories[_id].approvals[0]) return false;
-        if (!userStories[_id].approvals[1]) return false;
-        if (client != address(0) && !userStories[_id].approvals[2]) return false;   // two signatures are enough without a client
+
+        bool expired = reviewExpired(_id);
+        if (!userStories[_id].approvals[1] && !expired) return false;
+        if (client != address(0) && !userStories[_id].approvals[2] && !expired) return false;   // two signatures are enough without a client
         return true;
     }
 
@@ -296,7 +361,12 @@ contract UserStories {
     // Reading
     // ------------------------------------------------------------
 
-    // returns the skills a user story requires, which the automatic getter skips
+    // returns one user story, every field of it
+    function getUserStory(uint _id) public view returns (UserStory memory) {
+        return userStories[_id];
+    }
+
+    // returns the skills a user story requires
     function getRequiredSkillsOf(uint _id) public view returns (uint[] memory) {
         return userStories[_id].requiredSkills;
     }
