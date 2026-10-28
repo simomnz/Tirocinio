@@ -5,6 +5,13 @@
 pipeline {
     agent any                                   // creates the workspace
 
+    options {
+        // one build at a time: two builds signing together would use the same
+        // nonce on the verifier's account, and one of the two transactions
+        // would be thrown away
+        disableConcurrentBuilds()
+    }
+
     parameters {
         // filled by the listener, which found the contract on the chain, not
         // by a person. A wrong value is harmless: the job refuses to work for

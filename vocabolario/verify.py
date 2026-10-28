@@ -268,4 +268,8 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    except Exception as error:                 # a crash is not a rejected delivery: it is 2, so it gets looked at
+        print(str(error), file=sys.stderr)
+        sys.exit(2)
