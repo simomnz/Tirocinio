@@ -7,6 +7,7 @@
 #   python3 verify.py openproject 1117
 #   python3 verify.py openproject 1117 --write --chain
 #   python3 verify.py --story 0 --write --chain
+#   python3 verify.py openproject 1117 --hash
 #
 # With --story everything comes from the contract: which task the story maps
 # to, and which commit the developer declared as the delivery.
@@ -137,6 +138,7 @@ def main():
     arguments = [a for a in sys.argv[1:] if not a.startswith("--")]   # values and options kept apart, so their order does not matter
     write_back = "--write" in sys.argv
     sign_chain = "--chain" in sys.argv
+    print_hash = "--hash" in sys.argv               # prints the fingerprint of the criteria and stops
     story_id = None
 
     if "--story" in sys.argv:                           # chain driven: the contract says what to verify
@@ -189,6 +191,11 @@ def main():
         print("No acceptance criteria found in " + system + " " + key,
               file=sys.stderr)
         return 2
+
+    if print_hash:                                  # what the product owner freezes with setCriteriaHash
+        import blockchain
+        print(blockchain.prefixed(blockchain.criteria_hash(body)))
+        return 0
 
     repository = repository_for(system, project, body, requested)
     if repository is None:
@@ -259,7 +266,8 @@ def main():
             if target is None:
                 print("No Blockchain: field in the header, nothing recorded")
             else:
-                blockchain.record_tests_passed(target, full_revision.stdout.strip())
+                blockchain.record_tests_passed(target, full_revision.stdout.strip(),
+                                               blockchain.criteria_hash(body))   # the very text that was run
 
         return 0 if passed else 1                       # 0 the criteria pass, 1 they do not, 2 the system could not even try
 

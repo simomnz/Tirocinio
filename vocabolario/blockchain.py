@@ -64,6 +64,13 @@ def event_topic(name):
     return Web3.keccak(text=signature)
 
 
+# the fingerprint of the acceptance criteria. The contract freezes it before
+# the work starts, and checks it again when the outcome is recorded, so the
+# criteria somebody is judged on are provably the agreed ones
+def criteria_hash(text):
+    return Web3.keccak(text=text)
+
+
 # turns a Git commit into the twenty bytes the contract stores
 def to_bytes20(commit):
     text = commit.lower().replace("0x", "")
@@ -130,7 +137,7 @@ def get_delivery(story_id, address=None):
             "developer": story["developer"]}
 
 
-def record_tests_passed(story_id, commit, address=None):
+def record_tests_passed(story_id, commit, criteria, address=None):
     story_id = int(story_id)                  # arrives as a string from the command line
     w3, contract = connect(address)
 
@@ -169,9 +176,17 @@ def record_tests_passed(story_id, commit, address=None):
         print("  verified " + declared.hex())
         return None
 
+    # the criteria the contract froze before the work started
+    frozen = story["criteriaHash"]
+    if frozen != bytes(32) and frozen != criteria:
+        print("The criteria that were run are not the ones agreed on chain")
+        print("  agreed " + prefixed(frozen))
+        print("  run    " + prefixed(criteria))
+        return None
+
     # the signature, which costs gas
     account = w3.eth.account.from_key(VERIFIER_KEY)     # the address comes from the key, locally
-    call = contract.functions.recordTestsPassed(story_id, declared)   # prepares the call, does not send it
+    call = contract.functions.recordTestsPassed(story_id, declared, criteria)   # prepares the call, does not send it
 
     transaction = call.build_transaction({
         "from": account.address,              # not part of the signed transaction: the sender comes from the signature
@@ -186,6 +201,7 @@ def record_tests_passed(story_id, commit, address=None):
     print("Signing from  " + account.address)
     print("Developer     " + story["developer"])
     print("Commit        " + declared.hex())
+    print("Criteria      " + prefixed(criteria))
     print("Transaction   https://sepolia.etherscan.io/tx/" + prefixed(digest))
     print("Waiting for the block...")
 
@@ -199,11 +215,8 @@ def record_tests_passed(story_id, commit, address=None):
 
 
 def main():
-    if len(sys.argv) < 3:                     # argv[0] is the program name
-        print("Usage: blockchain.py <story-id> <commit>", file=sys.stderr)
-        return 2
-    record_tests_passed(sys.argv[1], sys.argv[2])
-    return 0
+    print("Not run on its own: verify.py uses this", file=sys.stderr)
+    return 2
 
 
 if __name__ == "__main__":

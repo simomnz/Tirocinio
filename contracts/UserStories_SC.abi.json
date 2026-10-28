@@ -1,5 +1,55 @@
 [
 	{
+		"inputs": [
+			{
+				"internalType": "uint256[][]",
+				"name": "_requiredSkills",
+				"type": "uint256[][]"
+			},
+			{
+				"internalType": "uint256[]",
+				"name": "_effort",
+				"type": "uint256[]"
+			},
+			{
+				"internalType": "uint256[]",
+				"name": "_payment",
+				"type": "uint256[]"
+			},
+			{
+				"internalType": "address",
+				"name": "_verifier",
+				"type": "address"
+			},
+			{
+				"internalType": "address",
+				"name": "_productOwner",
+				"type": "address"
+			}
+		],
+		"stateMutability": "nonpayable",
+		"type": "constructor"
+	},
+	{
+		"anonymous": false,
+		"inputs": [
+			{
+				"indexed": true,
+				"internalType": "uint256",
+				"name": "id",
+				"type": "uint256"
+			},
+			{
+				"indexed": false,
+				"internalType": "bytes32",
+				"name": "criteriaHash",
+				"type": "bytes32"
+			}
+		],
+		"name": "CriteriaHashSet",
+		"type": "event"
+	},
+	{
 		"anonymous": false,
 		"inputs": [
 			{
@@ -82,6 +132,12 @@
 				"internalType": "bytes20",
 				"name": "commit",
 				"type": "bytes20"
+			},
+			{
+				"indexed": false,
+				"internalType": "bytes32",
+				"name": "criteriaHash",
+				"type": "bytes32"
 			}
 		],
 		"name": "TestsPassed",
@@ -260,169 +316,6 @@
 		"type": "function"
 	},
 	{
-		"inputs": [
-			{
-				"internalType": "uint256",
-				"name": "_id",
-				"type": "uint256"
-			}
-		],
-		"name": "fundUserStory",
-		"outputs": [],
-		"stateMutability": "payable",
-		"type": "function"
-	},
-	{
-		"inputs": [
-			{
-				"internalType": "uint256",
-				"name": "_id",
-				"type": "uint256"
-			},
-			{
-				"internalType": "bytes20",
-				"name": "_commit",
-				"type": "bytes20"
-			}
-		],
-		"name": "recordTestsPassed",
-		"outputs": [],
-		"stateMutability": "nonpayable",
-		"type": "function"
-	},
-	{
-		"inputs": [
-			{
-				"internalType": "uint256",
-				"name": "_id",
-				"type": "uint256"
-			}
-		],
-		"name": "refundUserStory",
-		"outputs": [],
-		"stateMutability": "nonpayable",
-		"type": "function"
-	},
-	{
-		"inputs": [
-			{
-				"internalType": "uint256",
-				"name": "_id",
-				"type": "uint256"
-			}
-		],
-		"name": "releasePayment",
-		"outputs": [],
-		"stateMutability": "nonpayable",
-		"type": "function"
-	},
-	{
-		"inputs": [
-			{
-				"internalType": "address",
-				"name": "_verifier",
-				"type": "address"
-			}
-		],
-		"name": "removeVerifier",
-		"outputs": [],
-		"stateMutability": "nonpayable",
-		"type": "function"
-	},
-	{
-		"inputs": [
-			{
-				"internalType": "address",
-				"name": "_client",
-				"type": "address"
-			}
-		],
-		"name": "setClient",
-		"outputs": [],
-		"stateMutability": "nonpayable",
-		"type": "function"
-	},
-	{
-		"inputs": [
-			{
-				"internalType": "uint256",
-				"name": "_id",
-				"type": "uint256"
-			},
-			{
-				"internalType": "string",
-				"name": "_externalRef",
-				"type": "string"
-			}
-		],
-		"name": "setExternalRef",
-		"outputs": [],
-		"stateMutability": "nonpayable",
-		"type": "function"
-	},
-	{
-		"inputs": [
-			{
-				"internalType": "address",
-				"name": "_productOwner",
-				"type": "address"
-			}
-		],
-		"name": "setProductOwner",
-		"outputs": [],
-		"stateMutability": "nonpayable",
-		"type": "function"
-	},
-	{
-		"inputs": [
-			{
-				"internalType": "uint256",
-				"name": "_id",
-				"type": "uint256"
-			},
-			{
-				"internalType": "bytes20",
-				"name": "_commit",
-				"type": "bytes20"
-			}
-		],
-		"name": "submitWork",
-		"outputs": [],
-		"stateMutability": "nonpayable",
-		"type": "function"
-	},
-	{
-		"inputs": [
-			{
-				"internalType": "uint256[][]",
-				"name": "_requiredSkills",
-				"type": "uint256[][]"
-			},
-			{
-				"internalType": "uint256[]",
-				"name": "_effort",
-				"type": "uint256[]"
-			},
-			{
-				"internalType": "uint256[]",
-				"name": "_payment",
-				"type": "uint256[]"
-			},
-			{
-				"internalType": "address",
-				"name": "_verifier",
-				"type": "address"
-			},
-			{
-				"internalType": "address",
-				"name": "_productOwner",
-				"type": "address"
-			}
-		],
-		"stateMutability": "nonpayable",
-		"type": "constructor"
-	},
-	{
 		"inputs": [],
 		"name": "client",
 		"outputs": [
@@ -433,6 +326,19 @@
 			}
 		],
 		"stateMutability": "view",
+		"type": "function"
+	},
+	{
+		"inputs": [
+			{
+				"internalType": "uint256",
+				"name": "_id",
+				"type": "uint256"
+			}
+		],
+		"name": "fundUserStory",
+		"outputs": [],
+		"stateMutability": "payable",
 		"type": "function"
 	},
 	{
@@ -573,6 +479,11 @@
 						"type": "bytes20"
 					},
 					{
+						"internalType": "bytes32",
+						"name": "criteriaHash",
+						"type": "bytes32"
+					},
+					{
 						"internalType": "string",
 						"name": "externalRef",
 						"type": "string"
@@ -673,6 +584,11 @@
 						"type": "bytes20"
 					},
 					{
+						"internalType": "bytes32",
+						"name": "criteriaHash",
+						"type": "bytes32"
+					},
+					{
 						"internalType": "string",
 						"name": "externalRef",
 						"type": "string"
@@ -710,6 +626,148 @@
 			}
 		],
 		"stateMutability": "view",
+		"type": "function"
+	},
+	{
+		"inputs": [
+			{
+				"internalType": "uint256",
+				"name": "_id",
+				"type": "uint256"
+			},
+			{
+				"internalType": "bytes20",
+				"name": "_commit",
+				"type": "bytes20"
+			},
+			{
+				"internalType": "bytes32",
+				"name": "_criteriaHash",
+				"type": "bytes32"
+			}
+		],
+		"name": "recordTestsPassed",
+		"outputs": [],
+		"stateMutability": "nonpayable",
+		"type": "function"
+	},
+	{
+		"inputs": [
+			{
+				"internalType": "uint256",
+				"name": "_id",
+				"type": "uint256"
+			}
+		],
+		"name": "refundUserStory",
+		"outputs": [],
+		"stateMutability": "nonpayable",
+		"type": "function"
+	},
+	{
+		"inputs": [
+			{
+				"internalType": "uint256",
+				"name": "_id",
+				"type": "uint256"
+			}
+		],
+		"name": "releasePayment",
+		"outputs": [],
+		"stateMutability": "nonpayable",
+		"type": "function"
+	},
+	{
+		"inputs": [
+			{
+				"internalType": "address",
+				"name": "_verifier",
+				"type": "address"
+			}
+		],
+		"name": "removeVerifier",
+		"outputs": [],
+		"stateMutability": "nonpayable",
+		"type": "function"
+	},
+	{
+		"inputs": [
+			{
+				"internalType": "address",
+				"name": "_client",
+				"type": "address"
+			}
+		],
+		"name": "setClient",
+		"outputs": [],
+		"stateMutability": "nonpayable",
+		"type": "function"
+	},
+	{
+		"inputs": [
+			{
+				"internalType": "uint256",
+				"name": "_id",
+				"type": "uint256"
+			},
+			{
+				"internalType": "bytes32",
+				"name": "_criteriaHash",
+				"type": "bytes32"
+			}
+		],
+		"name": "setCriteriaHash",
+		"outputs": [],
+		"stateMutability": "nonpayable",
+		"type": "function"
+	},
+	{
+		"inputs": [
+			{
+				"internalType": "uint256",
+				"name": "_id",
+				"type": "uint256"
+			},
+			{
+				"internalType": "string",
+				"name": "_externalRef",
+				"type": "string"
+			}
+		],
+		"name": "setExternalRef",
+		"outputs": [],
+		"stateMutability": "nonpayable",
+		"type": "function"
+	},
+	{
+		"inputs": [
+			{
+				"internalType": "address",
+				"name": "_productOwner",
+				"type": "address"
+			}
+		],
+		"name": "setProductOwner",
+		"outputs": [],
+		"stateMutability": "nonpayable",
+		"type": "function"
+	},
+	{
+		"inputs": [
+			{
+				"internalType": "uint256",
+				"name": "_id",
+				"type": "uint256"
+			},
+			{
+				"internalType": "bytes20",
+				"name": "_commit",
+				"type": "bytes20"
+			}
+		],
+		"name": "submitWork",
+		"outputs": [],
+		"stateMutability": "nonpayable",
 		"type": "function"
 	},
 	{
@@ -766,6 +824,11 @@
 				"internalType": "bytes20",
 				"name": "commit",
 				"type": "bytes20"
+			},
+			{
+				"internalType": "bytes32",
+				"name": "criteriaHash",
+				"type": "bytes32"
 			},
 			{
 				"internalType": "string",

@@ -31,6 +31,7 @@ contract UserStories {
         address developer;
         address funder;            // who deposited, for a possible refund
         bytes20 commit;            // the Git commit declared by the developer
+        bytes32 criteriaHash;      // keccak of the acceptance criteria, frozen before the work starts
         string externalRef;        // the task this story maps to, e.g. "openproject:1117"
     }
 
@@ -41,7 +42,8 @@ contract UserStories {
     event UserStoryRefunded(uint indexed id, address funder, uint amount);
     event UserStoryClaimed(uint indexed id, address developer);
     event WorkSubmitted(uint indexed id, address developer, bytes20 commit);   // this is what starts the verification
-    event TestsPassed(uint indexed id, bytes20 commit);
+    event TestsPassed(uint indexed id, bytes20 commit, bytes32 criteriaHash);
+    event CriteriaHashSet(uint indexed id, bytes32 criteriaHash);
     event DeliveryApproved(uint indexed id, address signer, uint8 slot);
     event PaymentReleased(uint indexed id, address developer, uint amount);
     event ExternalRefSet(uint indexed id, string externalRef);
@@ -108,6 +110,17 @@ contract UserStories {
         require(_id < userStoryCount, "No such user story");
         userStories[_id].externalRef = _externalRef;
         emit ExternalRefSet(_id, _externalRef);
+    }
+
+    // freezes the acceptance criteria by their keccak. It can only be done
+    // before a developer takes the work, so that the criteria somebody is
+    // judged on are the ones that existed when they accepted the job
+    function setCriteriaHash(uint _id, bytes32 _criteriaHash) public onlyOwner {
+        require(_id < userStoryCount, "No such user story");
+        require(userStories[_id].taken == false, "Work already started");
+
+        userStories[_id].criteriaHash = _criteriaHash;
+        emit CriteriaHashSet(_id, _criteriaHash);
     }
 
     // ------------------------------------------------------------
@@ -226,16 +239,25 @@ contract UserStories {
 
     // records that the automated criteria passed on the declared commit.
     // It records an outcome, it does not authorise a payment
-    function recordTestsPassed(uint _id, bytes20 _commit) public onlyVerifier {
+    function recordTestsPassed(uint _id, bytes20 _commit, bytes32 _criteriaHash)
+        public onlyVerifier
+    {
         require(userStories[_id].paid == false, "Already paid");
         require(userStories[_id].taken == true, "User story not claimed");
         require(userStories[_id].workSubmitted == true, "No delivery to verify");
         require(userStories[_id].commit == _commit, "Commit does not match the delivery");   // proves the tests ran on the declared code
         require(userStories[_id].approvals[0] == false, "Tests already recorded");   // written once only
 
+        // when the criteria were frozen, the ones that were run must be those.
+        // Left at zero the check does not apply, so older user stories still work
+        if (userStories[_id].criteriaHash != bytes32(0)) {
+            require(userStories[_id].criteriaHash == _criteriaHash,
+                    "These are not the agreed criteria");
+        }
+
         userStories[_id].approvals[0] = true;
 
-        emit TestsPassed(_id, _commit);
+        emit TestsPassed(_id, _commit, _criteriaHash);
         emit DeliveryApproved(_id, msg.sender, 0);
     }
 
