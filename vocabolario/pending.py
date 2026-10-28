@@ -56,6 +56,9 @@ def pending():
         if contract.functions.getApprovals(story_id).call()[0]:
             continue                          # the tests are already recorded on chain
 
+        if ":" not in story["externalRef"]:
+            continue                          # nobody has linked it to a task yet, so there are no criteria to run
+
         if state.get(str(story_id)) == story["commit"].hex():
             continue                          # this very delivery was already tried
 
