@@ -151,6 +151,7 @@ def main():
             arguments.remove(story_id)                  # it is a value, but it belongs to the option
 
     declared_commit = None
+    frozen_criteria = None
     requested = None
 
     if story_id is not None:
@@ -163,6 +164,7 @@ def main():
         system = delivery["system"]
         key = delivery["task"]
         declared_commit = delivery["commit"]
+        frozen_criteria = delivery["criteriaHash"]
         print("User story " + str(story_id) + " on chain")
         print("  task     " + system + " " + key)
         print("  commit   " + declared_commit)
@@ -196,6 +198,18 @@ def main():
         import blockchain
         print(blockchain.prefixed(blockchain.criteria_hash(body)))
         return 0
+
+    # the criteria are checked before anything else happens: nothing is cloned,
+    # nothing is run and nothing is written back for a delivery that is going
+    # to be refused anyway
+    if frozen_criteria is not None:
+        import blockchain
+        running = blockchain.criteria_hash(body)
+        if running != frozen_criteria:
+            print("These are not the criteria agreed on chain", file=sys.stderr)
+            print("  agreed " + blockchain.prefixed(frozen_criteria), file=sys.stderr)
+            print("  found  " + blockchain.prefixed(running), file=sys.stderr)
+            return 2
 
     repository = repository_for(system, project, body, requested)
     if repository is None:

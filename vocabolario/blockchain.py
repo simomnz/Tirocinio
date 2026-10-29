@@ -134,6 +134,7 @@ def get_delivery(story_id, address=None):
     return {"system": system,
             "task": task,
             "commit": story["commit"].hex(),
+            "criteriaHash": story["criteriaHash"],
             "developer": story["developer"]}
 
 
@@ -179,7 +180,7 @@ def record_tests_passed(story_id, commit, criteria, address=None):
 
     # the criteria the contract froze before the work started
     frozen = story["criteriaHash"]
-    if frozen != bytes(32) and frozen != criteria:
+    if frozen != criteria:
         raise RuntimeError("These are not the criteria agreed on chain:"
                            " agreed " + prefixed(frozen) +
                            ", run " + prefixed(criteria))

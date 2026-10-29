@@ -1,6 +1,8 @@
-// Delivery verification pipeline. Nobody says what to verify: the listener
-// starts this job when a delivery appears on the chain, and the deliveries
-// themselves are read from the contract the developer declared them to.
+// PACT, Proof of Acceptance Criteria Testing.
+//
+// Nobody says what to verify: the listener starts this job when a delivery
+// appears on the chain, and the deliveries themselves are read from the
+// contract the developer declared them to.
 
 pipeline {
     agent any                                   // creates the workspace

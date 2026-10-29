@@ -26,7 +26,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 JENKINS_URL   = os.environ.get("JENKINS_URL", "http://127.0.0.1:8080")
 JENKINS_USER  = os.environ.get("JENKINS_USER", "")
 JENKINS_TOKEN = os.environ.get("JENKINS_TOKEN", "")      # an API token, not the password
-JENKINS_JOB   = os.environ.get("JENKINS_JOB", "verifica-consegne")
+JENKINS_JOB   = os.environ.get("JENKINS_JOB", "PACT")
 
 INTERVAL = int(os.environ.get("LISTEN_INTERVAL", "5"))   # seconds between one question and the next
 WINDOW = int(os.environ.get("LISTEN_WINDOW", "10"))      # blocks per question: nodes cap the range, and a bounded question is served everywhere
@@ -121,6 +121,8 @@ def main():
         try:
             latest = w3.eth.block_number
 
+            asked = set()                     # contracts already sent to Jenkins in this round
+
             while cursor <= latest:
                 last = min(cursor + WINDOW - 1, latest)   # one window at a time, so a long catch up does not ask too much at once
 
@@ -130,7 +132,6 @@ def main():
                     "topics": [TOPIC],
                 })
 
-                waiting = []
                 for log in logs:
                     address = Web3.to_checksum_address(log["address"])
 
@@ -139,10 +140,10 @@ def main():
                         save_known(known)
                         print(("Invited by " if known[address] else "Ignoring ") + address)
 
-                    if known[address] and address not in waiting:
-                        waiting.append(address)           # one build per contract, however many deliveries it holds
+                    if not known[address] or address in asked:
+                        continue                          # one build covers every delivery that contract is holding
 
-                for address in waiting:
+                    asked.add(address)
                     print("Delivery on " + address + ", block " + str(last))
                     print("Jenkins answered " + str(start_build(address)))
 
