@@ -11,6 +11,15 @@
 #
 # With --story everything comes from the contract: which task the story maps
 # to, and which commit the developer declared as the delivery.
+#
+# What it answers with:
+#   0  the automated criteria passed
+#   1  the delivery was refused, and that is an answer about the delivery
+#   2  it could not try, and trying again may work: this one stays in the queue
+#   3  it will never work as things stand, and somebody has to go and fix
+#      something. Retrying is pointless, so the delivery is not left in the
+#      queue: before, these came back as 2 and Jenkins went red at every round
+#      for ever without anybody being told why
 
 import json
 import os
@@ -31,29 +40,52 @@ TIMEOUT = int(os.environ.get("VERIFY_TIMEOUT", "600"))  # seconds, against a del
 SANDBOX = os.environ.get("VERIFY_SANDBOX", "on") != "off"   # off runs on this machine, for trying things out only
 
 
-# picks the repository holding the delivered code
+# the shapes of address git may be sent to. Anything else is refused, because
+# git reads some of them as a command to run: "ext::sh -c ..." executes on this
+# machine, and the address arrives from the description of a task, which is not
+# ours. The clone happens before any container exists, so nothing else guards
+# this: here is the only place it can be stopped
+ALLOWED_REPOSITORY = re.compile(r"^(https://[\w.-]+/[\w./~-]+|git@[\w.-]+:[\w./~-]+)$")
+
+
+# true when git may be pointed at this address
+def repository_allowed(repository):
+    if ALLOWED_REPOSITORY.match(repository):
+        return True
+
+    print("Repository address not allowed: " + repr(repository), file=sys.stderr)
+    print("Only https://host/path and git@host:path are accepted. Other forms, "
+          "such as ext:: or file://, make git run commands on this machine.",
+          file=sys.stderr)
+    return False
+
+
+# picks the repository holding the delivered code. Every way in goes through
+# repository_allowed, so no source of the address can skip the check
 def repository_for(system, project, body, requested):
     if requested:
-        return requested                                # the one given on the command line wins
+        chosen = requested                              # the one given on the command line wins
+    else:
+        written = re.search(r"^\s*Repository:\s*(\S+)\s*$", body, re.M)   # then the one written in the user story header
+        if written:
+            chosen = written.group(1)                   # group(1) is the part inside the brackets
+        else:
+            name = system + ":" + project
+            try:
+                with open(os.path.join(VERIFIER, "projects.json"), encoding="utf-8") as f:
+                    projects = json.load(f)
+            except FileNotFoundError:
+                projects = {}                           # a missing file is a configuration to do, not a failure
 
-    written = re.search(r"^\s*Repository:\s*(\S+)\s*$", body, re.M)   # then the one written in the user story header
-    if written:
-        return written.group(1)                         # group(1) is the part inside the brackets
+            if name not in projects:
+                print("No repository configured for \"" + name + "\"", file=sys.stderr)
+                print("Add it to projects.json, or pass it on the command line.",
+                      file=sys.stderr)
+                return None
 
-    name = system + ":" + project
-    try:
-        with open(os.path.join(VERIFIER, "projects.json"), encoding="utf-8") as f:
-            projects = json.load(f)
-    except FileNotFoundError:
-        projects = {}                                   # a missing file is a configuration to do, not a failure
+            chosen = projects[name]
 
-    if name not in projects:
-        print("No repository configured for \"" + name + "\"", file=sys.stderr)
-        print("Add it to projects.json, or pass it on the command line.",
-              file=sys.stderr)
-        return None
-
-    return projects[name]
+    return chosen if repository_allowed(chosen) else None
 
 
 # brings the repository into the folder at the exact commit asked for.
@@ -90,24 +122,43 @@ def clone_at(repository, folder, commit):
 
 # runs the criteria inside a throwaway container. The delivered code is
 # written by somebody else and is run here, so it gets a machine of its own:
-# no network out, no privileges, a time and memory ceiling, and the only
-# folder it can see is the temporary one
-def run_in_sandbox(work, code):
+# no network out, no privileges, a time and memory ceiling, and nothing of
+# ours to reach.
+#
+# Three separate folders, and not one: the criteria and our vocabulary go in
+# read only, so the code being judged cannot rewrite the questions; the
+# delivered code goes in read only on a path of its own; and the only writable
+# mount holds the outcome. Before, all three lived in the same writable tree,
+# so the delivered code sat next to the file that holds its own verdict
+def run_in_sandbox(run_dir, code, out_dir):
     name = "verify-" + str(os.getpid())
     command = [
         RUNNER, "run", "--rm", "--name", name,
         "--network", "none",                            # loopback still works, the outside does not
         "--user", str(os.getuid()) + ":" + str(os.getgid()),   # the files it writes belong to us, not to root
         "--memory", "512m", "--cpus", "1", "--pids-limit", "256",
-        "--read-only", "--tmpfs", "/tmp:rw,size=64m",   # the image itself cannot be changed
-        "--volume", work + ":/work:Z",                  # Z relabels the folder for SELinux, which otherwise denies the container
 
-        "--workdir", "/work",
-        "--env", "CODE_ROOT=/work/code",                # the path inside the container, not the one outside
+        # nothing the delivered code could ask the kernel for is left granted,
+        # and it cannot gain anything it was not given at the start
+        "--cap-drop", "ALL",
+        "--security-opt", "no-new-privileges",
+
+        # the image itself cannot be changed, and the one writable place it is
+        # left cannot be used to run a program from
+        "--read-only",
+        "--tmpfs", "/tmp:rw,noexec,nosuid,nodev,size=64m",
+
+        # Z relabels the folder for SELinux, which otherwise denies the container
+        "--volume", run_dir + ":/run:ro,Z",             # the criteria and the vocabulary
+        "--volume", code + ":/code:ro,Z",               # the delivered code, which has nothing to write here
+        "--volume", out_dir + ":/out:rw,Z",             # the outcome, the only thing that comes back
+
+        "--workdir", "/run",
+        "--env", "CODE_ROOT=/code",                     # the path inside the container, not the one outside
         "--env", "HOME=/tmp",
         "--env", "PYTHONDONTWRITEBYTECODE=1",
         IMAGE,
-        "behave", "-f", "json", "-o", "/work/outcome.json",
+        "behave", "-f", "json", "-o", "/out/outcome.json",
     ]
 
     try:
@@ -122,15 +173,16 @@ def run_in_sandbox(work, code):
 
 # runs them straight on this machine. Only for trying things out: here the
 # delivered code has whatever the user running it has
-def run_without_sandbox(work, code):
+def run_without_sandbox(run_dir, code, out_dir):
     environment = {
         "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
         "HOME": os.environ.get("HOME", "/tmp"),     # kept: Python finds the installed packages starting from here
         "LANG": os.environ.get("LANG", "C.UTF-8"),  # without it Python reads the files as ASCII
         "CODE_ROOT": code,
     }
-    return subprocess.run(["behave", "-f", "json", "-o", os.path.join(work, "outcome.json")],
-                          cwd=work, env=environment,
+    return subprocess.run(["behave", "-f", "json",
+                           "-o", os.path.join(out_dir, "outcome.json")],
+                          cwd=run_dir, env=environment,
                           capture_output=True, text=True, timeout=TIMEOUT)
 
 
@@ -181,7 +233,7 @@ def main():
 
     if system not in fetch_criteria.READERS:            # reuses the dictionary instead of repeating the list
         print("Unknown system: " + system, file=sys.stderr)
-        return 2
+        return 3                                        # no number of retries turns this into a known system
 
     key = fetch_criteria.normalize(system, key)         # once only, the same identifier is used to write back as well
 
@@ -192,7 +244,9 @@ def main():
     if not re.search(r"^\s*Scenario", body, re.M):
         print("No acceptance criteria found in " + system + " " + key,
               file=sys.stderr)
-        return 2
+        print("Somebody has to write them in the task: this is not a delivery "
+              "that failed.", file=sys.stderr)
+        return 3                                        # a task with no criteria will not grow any by itself
 
     if print_hash:                                  # what the product owner freezes with setCriteriaHash
         import blockchain
@@ -209,28 +263,53 @@ def main():
             print("These are not the criteria agreed on chain", file=sys.stderr)
             print("  agreed " + blockchain.prefixed(frozen_criteria), file=sys.stderr)
             print("  found  " + blockchain.prefixed(running), file=sys.stderr)
-            return 2
+            print("The text in the task was changed after it was frozen: until "
+                  "somebody puts it back, or the user story is reopened with "
+                  "the new criteria, this delivery cannot be verified.",
+                  file=sys.stderr)
+            return 3                                    # the text will not go back on its own
 
     repository = repository_for(system, project, body, requested)
     if repository is None:
-        return 2
+        return 3                                        # a missing configuration, not a passing failure
 
     work = tempfile.mkdtemp(prefix="verify-")           # everything lives here and is removed at the end
     try:
+        # three folders, kept apart so the container can mount them with
+        # different rights: ours to read, the delivery to read, the outcome to write
+        code = os.path.join(work, "code")               # the delivered code
+        run_dir = os.path.join(work, "run")             # the criteria and our vocabulary
+        out_dir = os.path.join(work, "out")             # what comes back
+        os.makedirs(out_dir)
+
+        header = [system + " " + key + " - " + title]
+        if story_id is not None:
+            header.append("User story " + str(story_id) + " on chain")
+
         # --- the code, from the repository, at the declared commit ---
-        code = os.path.join(work, "code")
         ok, problem = clone_at(repository, code, declared_commit)
         if not ok:
+            # a commit that is not in the repository is an invalid delivery,
+            # not a breakdown of this system: it is refused once and said out
+            # loud. Returning 2 left it in the queue, so Jenkins retried it at
+            # every round for ever and the developer was never told
             print(problem, file=sys.stderr)
-            return 2
+            if write_back:
+                report.write(system, key, project,
+                             "\n".join(header + ["", "Status: rejected, " + problem]),
+                             False)
+                print("Written back to " + system + ".")
+            return 1
 
         revision = subprocess.run(["git", "rev-parse", "--short", "HEAD"],
                                   cwd=code, capture_output=True, text=True)   # short form, for the report
         full_revision = subprocess.run(["git", "rev-parse", "HEAD"],
                                        cwd=code, capture_output=True, text=True)   # forty digits, for the chain
 
+        header.insert(1, "Repository: " + repository + " @ " + revision.stdout.strip())
+
         # --- the vocabulary, from our own repository ---
-        folder = os.path.join(work, "features")
+        folder = os.path.join(run_dir, "features")
         os.makedirs(os.path.join(folder, "steps"))      # behave expects exactly this layout
         shutil.copy(os.path.join(VERIFIER, "features", "environment.py"), folder)
         shutil.copy(os.path.join(VERIFIER, "features", "steps", "vocabulary.py"),
@@ -240,34 +319,39 @@ def main():
             f.write("Feature: " + title + "\n\n" + body + "\n")
 
         # --- running ---
-        outcome = os.path.join(work, "outcome.json")
+        outcome = os.path.join(out_dir, "outcome.json")
         if SANDBOX:
-            run = run_in_sandbox(work, code)
+            run = run_in_sandbox(run_dir, code, out_dir)
         else:
-            run = run_without_sandbox(work, code)       # the json is read, not the screen output, which changes between versions
+            run = run_without_sandbox(run_dir, code, out_dir)   # the json is read, not the screen output, which changes between versions
 
         if not os.path.exists(outcome):                 # no report means behave could not even read the criteria
             print("behave could not run the criteria:", file=sys.stderr)
             print((run.stdout + run.stderr).strip(), file=sys.stderr)
             return 2
 
-        header = [system + " " + key + " - " + title,
-                  "Repository: " + repository + " @ " + revision.stdout.strip()]
-        if story_id is not None:
-            header.append("User story " + str(story_id) + " on chain")
-
         text, passed = report.summary(outcome, header)
         print(text)
 
-        # --- the outcome goes back into the project management system ---
-        if write_back:
-            report.write(system, key, project, text, passed)
-            print()
-            print("Written back to " + system + ".")
+        # behave answers zero only when every scenario it ran passed, so a
+        # green report next to a non-zero exit code means the two do not
+        # describe the same run. Nothing is signed on a disagreement: the
+        # outcome file is the one thing the delivered code could get at
+        if passed and run.returncode != 0:
+            print("The report says the criteria passed but the run ended with "
+                  + str(run.returncode) + ": nothing is recorded",
+                  file=sys.stderr)
+            print((run.stdout + run.stderr).strip()[-2000:], file=sys.stderr)
+            return 2
 
         # --- the record on the chain ---
         # only when every automated criterion passed: it is the first of the
-        # three authorisations to payment, the other two stay human
+        # three authorisations to payment, the other two stay human.
+        #
+        # It goes first, and the report after: the other way round a project
+        # management system that was down took the signature with it, and the
+        # tests had passed. The fact belongs on the chain, the report is the
+        # account of it
         if sign_chain and passed:
             import blockchain
 
@@ -282,6 +366,12 @@ def main():
             else:
                 blockchain.record_tests_passed(target, full_revision.stdout.strip(),
                                                blockchain.criteria_hash(body))   # the very text that was run
+
+        # --- the outcome goes back into the project management system ---
+        if write_back:
+            report.write(system, key, project, text, passed)
+            print()
+            print("Written back to " + system + ".")
 
         return 0 if passed else 1                       # 0 the criteria pass, 1 they do not, 2 the system could not even try
 

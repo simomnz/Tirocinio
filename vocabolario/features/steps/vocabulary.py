@@ -1,10 +1,11 @@
 # Il vocabolario, ogni frase di Vocabolary.md corrisponde a una funzione di questo file.
 
-import importlib.util
 import json
 import os
 import re
+import secrets
 import subprocess
+import sys
 import time
 import urllib.request
 
@@ -33,11 +34,71 @@ def field(context, name):
     raise AssertionError("missing field " + name + " in the header")    # errore se non trova nulla
 
 
-def load_module(path):
-    spec = importlib.util.spec_from_file_location("under_test", path)   #under_test OBBLIGATORIO
-    module = importlib.util.module_from_spec(spec)      #modulo vuoto
-    spec.loader.exec_module(module)     #esegue il modulo e lo riempie
-    return module
+# Il codice consegnato gira in un processo suo, e non piu' dentro behave.
+#
+# Prima veniva importato qui con exec_module, cioe' eseguito nello stesso
+# interprete che lo giudica: da la' un modulo consegnato arriva agli oggetti di
+# behave, al formattatore che scrive l'esito, e al file dell'esito stesso.
+# Adesso l'unica cosa che torna indietro e' una riga di JSON.
+#
+# Il limite che resta e' del metodo, non di questo codice: un processo ostile
+# puo' mentire sul proprio comportamento. Quello che non puo' falsificare e'
+# cio' che si osserva da fuori, ed e' per questo che i passi che controllano un
+# codice di uscita, l'output o una risposta HTTP valgono di piu' di quelli che
+# controllano il valore restituito da una funzione.
+CALL_RUNNER = r'''
+import importlib.util, json, os, sys, time
+
+# il marcatore arriva da stdin e non da argv ne' dall'ambiente: il codice
+# consegnato puo' leggere sys.argv e /proc/self/environ, non uno stdin
+# già consumato e chiuso
+nonce = sys.stdin.read().strip()
+sys.stdin.close()
+
+path, function, arguments = sys.argv[1], sys.argv[2], sys.argv[3]
+outcome = {}
+
+spec = importlib.util.spec_from_file_location("under_test", path)
+module = importlib.util.module_from_spec(spec)
+
+start = time.time()
+try:
+    spec.loader.exec_module(module)
+    outcome["result"] = getattr(module, function)(*json.loads(arguments))
+except Exception as error:
+    outcome["error"] = str(error)
+outcome["duration"] = (time.time() - start) * 1000
+
+try:
+    text = json.dumps(outcome)
+except TypeError:                   # un risultato che non si puo' scrivere in JSON non si puo' nemmeno confrontare con i criteri
+    text = json.dumps({"error": "the result cannot be represented as JSON",
+                       "duration": outcome["duration"]})
+sys.stdout.write("\n__VERIFY_RESULT__" + nonce + text + "\n")
+sys.stdout.flush()
+os._exit(0)      # salta gli atexit: un handler registrato dal codice consegnato
+                 # scriverebbe dopo di noi, e l'ultima riga marcata vincerebbe
+'''
+
+MARKER = "__VERIFY_RESULT__"
+
+
+# legge la risposta del processo dall'output. Si accetta solo la riga marcata
+# col nonce di questa esecuzione: il codice consegnato scrive sullo stesso
+# stdout, ma non sa con cosa firmare
+def runner_answer(output, nonce):
+    found = None
+    for line in output.split("\n"):
+        if line.startswith(MARKER + nonce):
+            found = line[len(MARKER) + len(nonce):]
+
+    if found is None:
+        return {"error": "the delivered code did not answer: " +
+                         output.strip()[-400:]}      # le ultime righe bastano a capire cosa e' andato storto
+    try:
+        return json.loads(found)
+    except ValueError:
+        return {"error": "the answer of the delivered code is not readable"}
 
 
 def absolute_paths(command):
@@ -97,15 +158,20 @@ def step(context):
 
 @when('I call "{function}" with {arguments}')
 def step(context, function, arguments):
-    module = load_module(os.path.join(ROOT, field(context, "Module")))
-    values = json.loads(arguments)
+    json.loads(arguments)                   # controllato qui, cosi' un criterio scritto male fallisce prima di avviare niente
 
-    start = time.time()
-    try:
-        context.result = getattr(module, function)(*values)
-    except Exception as error:
-        context.error = str(error)
-    context.duration = (time.time() - start) * 1000
+    nonce = secrets.token_hex(16)            # imprevedibile, diverso a ogni criterio
+
+    outcome = subprocess.run(
+        [sys.executable, "-c", CALL_RUNNER,
+         os.path.join(ROOT, field(context, "Module")), function, arguments],
+        input=nonce, capture_output=True, text=True, timeout=120)
+
+    answer = runner_answer(outcome.stdout + outcome.stderr, nonce)
+
+    context.result = answer.get("result")
+    context.error = answer.get("error")
+    context.duration = answer.get("duration", 0)   # misurata dentro, senza l'avvio dell'interprete
 
 
 @when('I run "{command}"')

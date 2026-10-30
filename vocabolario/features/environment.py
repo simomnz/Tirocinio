@@ -5,12 +5,19 @@ import shutil
 import tempfile
 
 
+# le etichette si confrontano minuscole: @Manual non corrispondeva a "manual",
+# quindi veniva eseguito come se fosse un criterio automatico, e il resoconto
+# lo contava invece fra quelli da verificare a mano
+def is_manual(scenario):
+    return "manual" in [tag.lower() for tag in scenario.tags]
+
+
 def before_scenario(context, scenario):
-    
+
     # I criteri marcati @manual non si eseguono, li verifica il Product Owner
-    
-    if "manual" in scenario.tags:
-        scenario.skip("to be checked by hand")      
+
+    if is_manual(scenario):
+        scenario.skip("to be checked by hand")
         return                  # se manual non prepariamo lo scenario, non serve
 
     # Ogni scenario ha una cartella vuota dedicata, cosi' i file creati da un criterio non si vedono in quello dopo
@@ -30,7 +37,7 @@ def before_scenario(context, scenario):
 
 def after_scenario(context, scenario):
     
-    if "manual" in scenario.tags:
+    if is_manual(scenario):
         return                  #niente da toccare se manual
 
     os.chdir(context.previous)      #torniamo indietro alla cartella di prima

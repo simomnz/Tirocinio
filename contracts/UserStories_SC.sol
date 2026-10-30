@@ -17,6 +17,21 @@ contract UserStories {
     // key can be replaced without stopping the system
     mapping(address => bool) public verifiers;
 
+    // the employment contracts this one recognises. Before, the employment
+    // contract was whatever address the caller handed in, so anyone could
+    // write one for the occasion and answer the skill question however they
+    // liked. Which contracts count is a decision of the owner, on chain
+    mapping(address => bool) public employmentContracts;
+
+    // where a developer's certified skills are read from. One registry,
+    // chosen by the owner, and never an address supplied by whoever claims
+    address public skillRegistry;
+
+    // money a developer has earned but could not be sent, waiting to be taken
+    // with withdraw(). A payment that cannot be delivered must not be able to
+    // undo itself: the right stays written down here
+    mapping(address => uint) public owed;
+
     uint public userStoryCount;
 
     // how long the product owner has to review, counted from the moment the
@@ -26,8 +41,21 @@ contract UserStories {
 
     // how long a developer has to deliver: effort is a class, one week each,
     // so 1 is a week and 3 are three. After that he can no longer deliver,
-    // and the money stays in the contract: it only ever moves forward
+    // and the product owner can put the user story back on the market
     uint public constant WEEKS_PER_EFFORT = 1 weeks;
+
+    // how long a delivery made in time is protected after the deadline, so
+    // that a slow verifier cannot cost a developer the work he handed in on
+    // the last day. Past it the product owner can reopen, and the money is
+    // free again: nothing in this contract may be locked forever
+    uint public constant VERIFICATION_WINDOW = 3 days;
+
+    // the largest effort a user story may carry, in weeks: a year. It is a
+    // ceiling against a mistyped figure, not an opinion on how long work
+    // takes. Without it an effort of a few billion is accepted, the deadline
+    // lands past the end of the world, claimExpired is false for ever and
+    // reopenUserStory can never be called: the same lock as effort zero
+    uint public constant MAX_EFFORT = 52;
 
     struct UserStory {
         uint[] requiredSkills;
@@ -41,6 +69,7 @@ contract UserStories {
         address developer;
         address funder;            // who deposited, for a possible refund
         uint claimedAt;            // when a developer took it, zero when free
+        uint submittedAt;          // when the delivery was declared, zero when none
         uint testsPassedAt;        // when the automated criteria were recorded
         bytes20 commit;            // the Git commit declared by the developer
         bytes32 criteriaHash;      // keccak of the acceptance criteria, frozen before the work starts
@@ -61,7 +90,11 @@ contract UserStories {
     event CriteriaHashSet(uint indexed id, bytes32 criteriaHash);
     event DeliveryApproved(uint indexed id, address signer, uint8 slot);
     event PaymentReleased(uint indexed id, address developer, uint amount);
+    event PaymentOwed(uint indexed id, address developer, uint amount);   // the transfer did not get through, the credit is waiting
+    event Withdrawn(address developer, uint amount);
     event ExternalRefSet(uint indexed id, string externalRef);
+    event EmploymentContractAdded(address employment);
+    event SkillRegistrySet(address skillRegistry);
 
     // creates the initial user stories and sets who will be allowed to sign
     constructor(
@@ -78,6 +111,15 @@ contract UserStories {
 
         userStoryCount = _requiredSkills.length;
         for (uint i = 0; i < userStoryCount; i++) {
+            // effort zero would mean no deadline at all, and a user story
+            // without a deadline can never be reopened: the money would have
+            // no way out if the developer simply disappeared. A huge effort
+            // does the same thing by the other door, and a mistyped figure is
+            // enough: at a week each, a deadline nobody lives to see is a
+            // deadline that never arrives
+            require(_effort[i] > 0 && _effort[i] <= MAX_EFFORT,
+                    "Effort must be between one and MAX_EFFORT");
+
             userStories[i].requiredSkills = _requiredSkills[i];
             userStories[i].effort = _effort[i];
             userStories[i].payment = _payment[i];
@@ -115,6 +157,23 @@ contract UserStories {
         client = _client;
     }
 
+    // declares an employment contract as one of ours. A developer can only
+    // claim work through a contract that appears here
+    function addEmploymentContract(address _employment) public onlyOwner {
+        employmentContracts[_employment] = true;
+        emit EmploymentContractAdded(_employment);
+    }
+
+    function removeEmploymentContract(address _employment) public onlyOwner {
+        employmentContracts[_employment] = false;
+    }
+
+    // says where certified skills are read from
+    function setSkillRegistry(address _skillRegistry) public onlyOwner {
+        skillRegistry = _skillRegistry;
+        emit SkillRegistrySet(_skillRegistry);
+    }
+
     // ------------------------------------------------------------
     // Link to the project management system
     // ------------------------------------------------------------
@@ -123,6 +182,15 @@ contract UserStories {
     // lives in one place instead of being written by hand on both sides
     function setExternalRef(uint _id, string calldata _externalRef) public onlyOwner {
         require(_id < userStoryCount, "No such user story");
+
+        // only while nobody is working on it. This is what tells the verifier
+        // which task to read, and therefore which repository to clone, and the
+        // frozen hash covers the text of the criteria and not that link: with
+        // criteria written to be reused, two tasks can share one hash, so
+        // moving the link afterwards pointed the verification at other code
+        // and no check noticed
+        require(userStories[_id].taken == false, "Work already started");
+
         userStories[_id].externalRef = _externalRef;
         emit ExternalRefSet(_id, _externalRef);
     }
@@ -177,7 +245,9 @@ contract UserStories {
     // Claiming the work
     // ------------------------------------------------------------
 
-    // asks an employment contract which skills the job requires
+    // asks an employment contract which skills the job it describes requires.
+    // Informative only: these are the requirements of a hiring round, not the
+    // skills of any developer, and nothing is ever authorised with them
     function getRequiredSkills(address employmentAddress)
         public view returns (uint[] memory)
     {
@@ -185,19 +255,32 @@ contract UserStories {
         return employmentContract.getSkillList();
     }
 
-    // lists the user stories a developer could claim
-    function listAvailableUserStories(address employmentAddress)
+    // the skills certified for a developer, read from the registry the owner
+    // configured. This is what a claim is checked against
+    function certifiedSkills(address developer)
         public view returns (uint[] memory)
     {
-        uint[] memory available = new uint[](userStoryCount);   // as long as all of them, filled only in part
-        uint[] memory skills = getRequiredSkills(employmentAddress);
-        uint found = 0;
+        require(skillRegistry != address(0), "No skill registry configured");
+        return Skill(skillRegistry).getSkill(developer);
+    }
 
+    // lists the user stories this developer could claim, by his own skills
+    function listAvailableUserStories(address developer)
+        public view returns (uint[] memory)
+    {
+        uint[] memory skills = certifiedSkills(developer);
+
+        uint found = 0;
+        for (uint id = 0; id < userStoryCount; id++) {          // first pass counts, so the array comes out the right length
+            if (isAvailable(id) && hasAllSkills(id, skills)) found++;
+        }
+
+        uint[] memory available = new uint[](found);            // exactly as long as what was found: a trailing zero used to be indistinguishable from user story 0
+        uint k = 0;
         for (uint id = 0; id < userStoryCount; id++) {
-            if (!isAvailable(id)) continue;
-            if (hasAllSkills(id, skills)) {
-                available[found] = id;
-                found++;
+            if (isAvailable(id) && hasAllSkills(id, skills)) {
+                available[k] = id;
+                k++;
             }
         }
         return available;
@@ -217,9 +300,22 @@ contract UserStories {
         return matched == userStories[_id].requiredSkills.length;   // all of them, not just some
     }
 
-    // assigns the chosen user stories to the caller
+    // assigns the chosen user stories to the caller.
+    //
+    // Three things are checked, and none of them is in the caller's hands:
+    // the employment contract must be one the owner recognises, that contract
+    // must say this caller was hired, and the skills compared against the
+    // user story are the caller's own certified ones. Before, the only check
+    // read a list of skills out of an address the caller passed in, and
+    // msg.sender appeared nowhere in it: any address could claim any funded
+    // user story, declare a delivery, and be paid for it
     function claimUserStories(address employmentAddress, uint[] memory _ids) public {
-        uint[] memory skills = getRequiredSkills(employmentAddress);
+        require(employmentContracts[employmentAddress], "Unknown employment contract");
+        require(SkillSelection(employmentAddress).isHired(msg.sender),
+                "You are not hired on this employment contract");
+
+        uint[] memory skills;
+        bool skillsRead = false;                           // read once, and only if some user story asks for skills
 
         for (uint i = 0; i < _ids.length; i++) {
             uint id = _ids[i];
@@ -228,7 +324,14 @@ contract UserStories {
             // the contract: that is the guarantee, and it does not depend on trust
             require(userStories[id].funded, "User story is not funded");
             require(isAvailable(id), "User story already claimed");   // being funded already implies frozen criteria
-            require(hasAllSkills(id, skills), "Missing required skills");   // fails loudly instead of doing nothing
+
+            if (userStories[id].requiredSkills.length > 0) {
+                if (!skillsRead) {
+                    skills = certifiedSkills(msg.sender);
+                    skillsRead = true;
+                }
+                require(hasAllSkills(id, skills), "Missing required skills");   // fails loudly instead of doing nothing
+            }
 
             userStories[id].taken = true;
             userStories[id].developer = msg.sender;
@@ -237,16 +340,33 @@ contract UserStories {
         }
     }
 
-    // true when the developer who took it has run out of time without
-    // delivering. From that moment he can no longer deliver, and the product
-    // owner can reopen the user story
+    // true when the developer who took it has run out of time. From that
+    // moment he can no longer deliver, and the product owner can reopen.
+    //
+    // The clock is read off claimedAt and nothing else. It used to return
+    // false as soon as workSubmitted was set, which did two unintended
+    // things: the deadline cancelled itself after the first delivery, so a
+    // developer could keep delivering months later; and claimExpired stayed
+    // false forever, so reopenUserStory could never be called, refund was
+    // already impossible on a claimed story, and payment needed tests that
+    // never passed. Anyone could therefore wall the money in with two
+    // transactions: claim it, declare a delivery, and never deliver
     function claimExpired(uint _id) public view returns (bool) {
         if (!userStories[_id].taken) return false;
-        if (userStories[_id].workSubmitted) return false;   // delivered in time, the verifier has it now
         if (userStories[_id].effort == 0) return false;     // no class, no clock
 
         return block.timestamp > userStories[_id].claimedAt +
                                  userStories[_id].effort * WEEKS_PER_EFFORT;
+    }
+
+    // true while a delivery handed in before the deadline still has its
+    // verification window. It protects work submitted on the last day from a
+    // verifier that has not got to it yet, and it runs out, so it can never
+    // become the permanent lock that workSubmitted used to be
+    function verificationPending(uint _id) public view returns (bool) {
+        if (!userStories[_id].workSubmitted) return false;
+        if (userStories[_id].approvals[0]) return false;    // already recorded, the window is over
+        return block.timestamp <= userStories[_id].submittedAt + VERIFICATION_WINDOW;
     }
 
     // true when somebody can take this user story right now. An expired claim
@@ -265,11 +385,28 @@ contract UserStories {
         require(claimExpired(_id), "The developer still has time");
         require(_criteriaHash != bytes32(0), "The criteria must be stated again");
 
+        // past this point the developer has a right that was earned, and the
+        // work is not taken away from him: the money can only go forward
+        require(userStories[_id].approvals[0] == false, "The tests have already passed");
+        require(userStories[_id].paid == false, "Already paid");
+
+        // and a delivery made in time is not thrown away while its
+        // verification window is still open
+        require(verificationPending(_id) == false,
+                "A delivery made in time is still being verified");
+
         address previous = userStories[_id].developer;
         userStories[_id].taken = false;
         userStories[_id].developer = address(0);
         userStories[_id].claimedAt = 0;
         userStories[_id].criteriaHash = _criteriaHash;
+
+        // the abandoned delivery goes with the claim, or the next developer
+        // would inherit somebody else's commit as if it were his own
+        userStories[_id].workSubmitted = false;
+        userStories[_id].submittedAt = 0;
+        userStories[_id].commit = bytes20(0);
+        userStories[_id].testsPassedAt = 0;             // the require above proves it is already zero: written anyway, so the review clock cannot be inherited
 
         emit ClaimExpired(_id, previous);
         emit CriteriaHashSet(_id, _criteriaHash);
@@ -290,6 +427,7 @@ contract UserStories {
 
         userStories[_id].commit = _commit;
         userStories[_id].workSubmitted = true;
+        userStories[_id].submittedAt = block.timestamp;   // opens the verification window, which the deadline no longer cancels
 
         emit WorkSubmitted(_id, msg.sender, _commit);
     }
@@ -371,8 +509,11 @@ contract UserStories {
         return userStories[_id].requiredSkills;
     }
 
-    // returns every user story in one call
-    function listAllUserStories() public view onlyOwner returns (UserStory[] memory) {
+    // returns every user story in one call.
+    // Not restricted to the owner: every one of these fields is already
+    // readable by anyone straight off the chain, so a modifier here would
+    // only have suggested a privacy this contract does not have
+    function listAllUserStories() public view returns (UserStory[] memory) {
         UserStory[] memory all = new UserStory[](userStoryCount);
         for (uint i = 0; i < userStoryCount; i++) {
             all[i] = userStories[i];
@@ -382,7 +523,7 @@ contract UserStories {
 
     // returns the user stories assigned to one developer
     function listUserStoriesOf(address developer)
-        public view onlyOwner returns (UserStory[] memory)
+        public view returns (UserStory[] memory)
     {
         uint count = 0;
         for (uint i = 0; i < userStoryCount; i++) {            // first pass counts, because the length must be known up front
@@ -407,6 +548,12 @@ contract UserStories {
         uint _payment,
         string calldata _externalRef
     ) public onlyOwner returns (uint) {
+        // no effort means no deadline, and no deadline means no way to reopen.
+        // The ceiling is there for the same reason: a deadline set far enough
+        // away never arrives, and the money would stay in here for good
+        require(_effort > 0 && _effort <= MAX_EFFORT,
+                "Effort must be between one and MAX_EFFORT");
+
         uint id = userStoryCount;                              // the new identifier is the current count
         userStories[id].requiredSkills = _requiredSkills;
         userStories[id].effort = _effort;
@@ -439,8 +586,32 @@ contract UserStories {
         // call and not transfer: transfer only forwards 2300 gas and would fail
         // when the developer receives on a contract wallet
         (bool ok, ) = payable(developer).call{value: amount}("");
-        require(ok, "Transfer failed");
+
+        // and when even call does not get through, the payment is not undone:
+        // the right was earned and is written down as a credit the developer
+        // withdraws when he can. A require here would have reverted the whole
+        // transaction every time, for ever, and an address that cannot receive
+        // would have been one more way to lock the money in this contract
+        if (!ok) {
+            owed[developer] += amount;
+            emit PaymentOwed(_id, developer, amount);
+        }
 
         emit PaymentReleased(_id, developer, amount);
+    }
+
+    // takes a credit left by a payment that could not get through. It is the
+    // one place in this contract where the money moves on the asking of the
+    // person it belongs to, so nothing else has to succeed for him to be paid
+    function withdraw() public {
+        uint amount = owed[msg.sender];
+        require(amount > 0, "Nothing owed to you");
+
+        owed[msg.sender] = 0;                                  // zeroed before the transfer, so a reentrant call finds nothing
+
+        (bool ok, ) = payable(msg.sender).call{value: amount}("");
+        require(ok, "Transfer failed");                        // here reverting is right: the credit stays and can be taken later
+
+        emit Withdrawn(msg.sender, amount);
     }
 }

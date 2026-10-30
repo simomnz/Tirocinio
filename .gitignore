@@ -23,3 +23,7 @@ __pycache__/
 # Stato locale del sorvegliante e dell'ascoltatore
 vocabolario/attempted.json
 vocabolario/last-block.txt
+vocabolario/utenti.json*.patch
+.ua/
+vocabolario/utenti.json
+*.patch

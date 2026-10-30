@@ -115,9 +115,13 @@ pipeline {
                             status=0
                             python3 verify.py --story "$id" $flags || status=$?   # || keeps set -e from aborting the loop
 
-                            if [ "$status" = "2" ]; then    # it could not even try, so it must be tried again
+                            if [ "$status" = "2" ]; then    # it could not even try, and trying again may work
                                 echo "user story $id could not be verified, it stays in the queue"
                                 problems=1
+                            elif [ "$status" = "3" ]; then  # it will never work as things stand
+                                echo "user story $id cannot be verified: somebody has to fix the task or the configuration"
+                                python3 pending.py --mark "$id"   # noted: retrying it every round would only repeat the same red build
+                                problems=1                        # still a red build, because it needs a person
                             else                            # 0 passed and is recorded on chain, 1 did not pass
                                 python3 pending.py --mark "$id"   # noted, so the same delivery is not commented again every round
                             fi

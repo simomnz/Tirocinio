@@ -52,10 +52,21 @@ def summary(path, header):
             if element.get("type") == "scenario":             # scarta quello che non e' scenario
                 scenarios.append(element)
 
-    manual = [s for s in scenarios if "manual" in s.get("tags", [])]        # le etichette senza la chiocciola
-    automated = [s for s in scenarios if "manual" not in s.get("tags", [])]
+    # le etichette senza la chiocciola, confrontate minuscole: @Manual contava
+    # come criterio automatico e veniva eseguito, mentre qui risultava a mano
+    def is_manual(scenario):
+        return "manual" in [t.lower() for t in scenario.get("tags", [])]
+
+    manual = [s for s in scenarios if is_manual(s)]
+    automated = [s for s in scenarios if not is_manual(s)]
     passed = [s for s in automated if s.get("status") == "passed"]
-    all_green = len(passed) == len(automated)                 # il verdetto guarda solo gli automatici
+
+    # zero criteri automatici non e' un esito positivo. Prima il confronto era
+    # len(passed) == len(automated), vero anche con entrambi a zero: una user
+    # story con tutti gli scenari @manual, o un Outline senza Examples, usciva
+    # "tutto verde" e veniva firmata sulla catena senza che un solo test
+    # fosse girato
+    all_green = len(automated) > 0 and len(passed) == len(automated)
 
     lines = list(header)
     lines.append("")
@@ -90,8 +101,12 @@ def summary(path, header):
             lines.append("  " + scenario["name"])
 
     lines.append("")
-    if all_green and manual:
-        lines.append("Status: waiting for the Product Owner.")
+    if not automated:
+        lines.append("Status: there is no automated criterion to run, "
+                     "nothing has been verified.")
+    elif all_green and manual:
+        lines.append("Status: the automated criteria passed, "
+                     "waiting for the Product Owner.")
     elif all_green:
         lines.append("Status: all automated criteria passed.")
     else:

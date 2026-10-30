@@ -46,10 +46,19 @@ def challenge_text(contract, story, nonce):
             "nonce: " + nonce)
 
 
-# everything before the first scenario is the story, the rest are the criteria
+# everything before the first scenario is the story, the rest are the criteria.
+#
+# It returns nothing when it cannot find where the criteria begin. Before it
+# returned the whole body in that case, which is the wrong way round: a task
+# that is not a Gherkin user story has no Scenario line, so any other task of
+# the project management system came out entire. A cut that cannot prove it
+# cut something must hand back nothing
 def story_only(body):
     criteria = re.search(r"^\s*(Scenario|Background|Examples)", body, re.M)
-    return body[:criteria.start()].rstrip() if criteria else body.rstrip()
+    if not criteria:
+        return None
+
+    return body[:criteria.start()].rstrip()
 
 
 class Brief(BaseHTTPRequestHandler):
@@ -101,6 +110,15 @@ class Brief(BaseHTTPRequestHandler):
         asker = Account.recover_message(message, signature=request["signature"])
 
         _, live = blockchain.connect(contract)
+
+        # the address of the contract arrives from whoever is asking, so until
+        # this question is answered nothing it says means anything: a contract
+        # written for the occasion can claim any address is its developer, and
+        # the task it then names would be read with our token. Every other
+        # place that reaches a contract asks this first
+        if not blockchain.is_invited(live):
+            return 403, {"error": "This contract does not list us as a verifier"}
+
         story_on_chain = blockchain.read_story(live, story)
 
         # the chain is the only place where it is written who is working on what
@@ -114,11 +132,18 @@ class Brief(BaseHTTPRequestHandler):
             return 404, {"error": "This user story has no task linked to it"}
 
         system, key = reference.split(":", 1)
+        if system not in fetch_criteria.READERS:   # named by the contract, so not to be trusted as a key
+            return 404, {"error": "Unknown project management system"}
+
         title, description, _ = fetch_criteria.READERS[system](key)
 
+        narrative = story_only(fetch_criteria.clean(description))
+        if narrative is None:                 # no criteria found, so nothing was cut
+            return 404, {"error": "This task does not hold acceptance criteria, "
+                                  "so the story cannot be served without them"}
+
         print("Brief for user story " + str(story) + " to " + asker)
-        return 200, {"title": title,
-                     "story": story_only(fetch_criteria.clean(description))}
+        return 200, {"title": title, "story": narrative}
 
     def log_message(self, formatting, *arguments):
         pass                                  # one line per request on stderr is noise, what matters is printed above

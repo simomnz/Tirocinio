@@ -8,10 +8,16 @@
 #   python3 esercizi.py count-lines dati.txt
 #   python3 esercizi.py export-csv persone.json uscita.csv
 #   python3 esercizi.py make-code
+#   python3 esercizi.py signup anna@esempio.it SegretoLungo1
+#   python3 esercizi.py verify anna@esempio.it
+#   python3 esercizi.py login  anna@esempio.it SegretoLungo1
+#   python3 esercizi.py pagina             la finta pagina di registrazione
 
+import hashlib
 import json
 import os
 import random
+import re
 import sys
 
 
@@ -73,7 +79,123 @@ def make_code():
     return "".join(random.choice("0123456789") for _ in range(6))
 
 
-# Menu interattivo
+# User story 6 - Pagina WEB
+
+# Gli utenti stanno in un file JSON
+
+ARCHIVIO = "utenti.json"
+PASSWORD_MINIMA = 8
+
+# controllo @, spazi e punti
+EMAIL = re.compile(r"^[^@\s]+@[^@\s]+\.[^@\s]+$")
+
+
+def _carica_utenti(percorso=ARCHIVIO):
+    if not os.path.exists(percorso):
+        return {}                                  # il primo utente crea l'archivio
+
+    with open(percorso, encoding="utf-8") as f:
+        return json.load(f)
+
+
+def _salva_utenti(utenti, percorso=ARCHIVIO):
+    with open(percorso, "w", encoding="utf-8") as f:
+        json.dump(utenti, f, indent=2, sort_keys=True)
+
+
+def _impronta(password, sale):
+    #si aggiunge il sale per cryptare meglio password uguali
+    return hashlib.sha256((sale + password).encode("utf-8")).hexdigest()
+
+
+def signup(email, password):
+    if not EMAIL.match(email):
+        raise ValueError("Email non valida: " + email)
+    if len(password) < PASSWORD_MINIMA:
+        raise ValueError("Password troppo corta, minimo " +
+                         str(PASSWORD_MINIMA) + " caratteri")
+
+    utenti = _carica_utenti()
+    if email in utenti:
+        raise ValueError("Utente già registrato: " + email)
+
+    sale = make_code()                            
+    utenti[email] = {"sale": sale,"impronta": _impronta(password, sale), "verified": False}            
+
+    return {"email": email, "verified": False}
+
+
+def verify(email):
+    utenti = _carica_utenti()
+    if email not in utenti:
+        raise ValueError("Utente inesistente: " + email)
+
+    utenti[email]["verified"] = True
+    _salva_utenti(utenti)
+
+    return {"email": email, "verified": True}
+
+
+def login(email, password):
+    utenti = _carica_utenti()
+    if email not in utenti:
+        raise ValueError("Utente inesistente: " + email)
+
+    utente = utenti[email]
+
+    # prima la password e poi la verifica
+    if _impronta(password, utente["sale"]) != utente["impronta"]:
+        raise ValueError("Password errata")
+    if not utente["verified"]:
+        raise ValueError("Account non verificato: " + email)
+
+    return {"email": email, "verified": True}
+
+
+# Finta pagina web
+def pagina():
+    while True:
+        print("\n+" + "-" * 44 + "+")
+        print("|" + " GESTIONE ACCOUNT ".center(44) + "|")
+        print("+" + "-" * 44 + "+\n")
+        print("  1 - Registrazione (Signup)")
+        print("  2 - Accesso (Login)")
+        print("  3 - Verifica Email")
+        print("  0 - Torna al menu principale\n")
+
+        scelta = input("  Scegli un'opzione: ").strip()
+
+        if scelta == "0":
+            break
+
+        elif scelta == "1":
+            email = input("  Email: ").strip()
+            password = input("  Password: ").strip()
+            try:
+                signup(email, password)
+                print("\n  [ok] Account creato. Usa l'opzione 3 per verificare l'email prima di accedere.")
+            except ValueError as errore:
+                print("\n  [!] " + str(errore))
+
+        elif scelta == "2":
+            email = input("  Email: ").strip()
+            password = input("  Password: ").strip()
+            try:
+                login(email, password)
+                print("\n  [ok] Accesso riuscito. Benvenuto " + email + ".")
+            except ValueError as errore:
+                print("\n  [!] " + str(errore))
+
+        elif scelta == "3":
+            email = input("  Email da verificare: ").strip()
+            try:
+                verify(email)
+                print("\n  [ok] Email verificata con successo.")
+            except ValueError as errore:
+                print("\n  [!] " + str(errore))
+
+        else:
+            print("\n  [!] Scelta non valida.")
 
 def menu():
     while True:
@@ -83,6 +205,7 @@ def menu():
         print("3  contare le righe di un file")
         print("4  convertire un file JSON in CSV")
         print("5  generare un codice")
+        print("6  Pagina WEB")
         print("0  uscire")
 
         scelta = input("Scelta: ").strip()
@@ -110,6 +233,9 @@ def menu():
 
             elif scelta == "5":
                 print(make_code())
+
+            elif scelta == "6":
+                pagina()
 
             else:
                 print("Scelta non valida")
