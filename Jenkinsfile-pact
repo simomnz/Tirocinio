@@ -62,7 +62,7 @@ pipeline {
                     fi
                     . "$VENV/bin/activate"          # . is source
 
-                    pip install --quiet -r vocabolario/requirements.txt   # -r list from a file, --quiet errors only
+                    pip install --quiet -r verificatore/requirements.txt   # -r list from a file, --quiet errors only
                     echo "Ready:"
                     pip list --format=freeze | grep -E '^(behave|web3)='  # -E extended regex, ^ start of line
                 '''
@@ -91,7 +91,7 @@ pipeline {
                     sh '''
                         set +x                  # set +x does not print the commands
                         . "$VENV/bin/activate"
-                        cd vocabolario
+                        cd verificatore
 
                         if [ -z "$CONTRACT_ADDRESS" ]; then   # started by hand, with nobody saying which contract
                             echo "No contract given: this job is started by the listener"
