@@ -1,231 +1,231 @@
-# Vocabolario
+# Vocabulary
 
 ## Standard Gherkin
 
-| Parola | Cosa fa |
+| Word | What it does |
 |---|---|
-| `Feature:` | apre il file, dice di cosa si tratta |
-| `Rule:` | raggruppa scenari dentro una Feature |
-| `Background:` | passi comuni, eseguiti prima di ogni scenario |
-| `Scenario:` | un criterio di accettazione |
-| `Scenario Outline:` | un criterio con più casi |
-| `Examples:` | la tabella dei casi di uno Scenario Outline |
-| `Given` | situazione di partenza |
-| `When` | azione |
-| `Then` | verifica |
-| `And` | continua la riga precedente, dello stesso tipo |
-| `But` | come `And`, in negativo |
-| `@etichetta` | marca uno scenario |
-| `#` | commento |
-| `"""` | blocco di testo su più righe |
-| `\| a \| b \|` | tabella di valori |
+| `Feature:` | opens the file, says what it is about |
+| `Rule:` | groups scenarios inside a Feature |
+| `Background:` | shared steps, run before every scenario |
+| `Scenario:` | one acceptance criterion |
+| `Scenario Outline:` | one criterion with several cases |
+| `Examples:` | the table of cases of a Scenario Outline |
+| `Given` | the starting situation |
+| `When` | the action |
+| `Then` | the check |
+| `And` | carries on the line above, of the same kind |
+| `But` | like `And`, in the negative |
+| `@label` | marks a scenario |
+| `#` | a comment |
+| `"""` | a block of text over several lines |
+| `\| a \| b \|` | a table of values |
 
 
-## Given — preparare
+## Given — getting ready
 
-| Frase | Cosa fa |
+| Phrase | What it does |
 |---|---|
-| `Given the file {string} contains {string}` | crea il file con quel contenuto |
-| `Given the file {string} contains the text` | come sopra, col contenuto nel blocco `"""` sotto |
-| `Given the file {string} is empty` | crea il file vuoto |
-| `Given the file {string} does not exist` | lo rimuove se c'è |
-| `Given the service is running` | avvia il servizio e aspetta che risponda |
+| `Given the file {string} contains {string}` | writes the file with that content |
+| `Given the file {string} contains the text` | the same, with the content in the `"""` block below |
+| `Given the file {string} is empty` | writes the file empty |
+| `Given the file {string} does not exist` | removes it if it is there |
+| `Given the service is running` | starts the service and waits for it to answer |
 
-## When — agire
+## When — acting
 
-| Frase | Cosa fa |
+| Phrase | What it does |
 |---|---|
-| `When I call {string} with {json}` | chiama la funzione, il secondo valore è l'elenco degli argomenti |
-| `When I run {string}` | esegue il comando |
-| `When I send {word} {string}` | manda una richiesta: metodo e percorso |
-| `When I send {word} {string} with {json}` | manda una richiesta con un corpo |
+| `When I call {string} with {json}` | calls the function, the second value is the list of its arguments |
+| `When I run {string}` | runs the command |
+| `When I send {word} {string}` | sends a request: the method and the path |
+| `When I send {word} {string} with {json}` | sends a request with a body |
 
-## Then — verificare
+## Then — checking
 
-| Frase | Cosa controlla |
+| Phrase | What it checks |
 |---|---|
-| `Then I get {json}` | il valore restituito, corrispondenza esatta |
-| `Then the result is between {float} and {float}` | valori approssimati |
-| `Then the result has {int} items` | la forma, non il contenuto |
-| `Then the result contains {string}` | corrispondenza parziale |
-| `Then the result does not contain {string}` | il testo non c'è |
-| `Then the output contains {string}` | un testo nell'output |
-| `Then the output does not contain {string}` | il testo non è nell'output |
-| `Then the output matches {string}` | un'espressione regolare |
-| `Then it succeeds` | codice di uscita 0 |
-| `Then it fails` | codice di uscita diverso da 0 |
-| `Then the error {string} is raised` | l'eccezione attesa |
-| `Then I receive status {int}` | codice di stato HTTP |
-| `Then the body contains {string}` | contenuto della risposta |
-| `Then the body does not contain {string}` | il testo non è nella risposta |
-| `Then the file {string} exists` | il file è stato creato |
-| `Then the file {string} does not exist` | non c'è, o è stato rimosso |
-| `Then the file {string} contains {string}` | il contenuto del file |
-| `Then the file {string} does not contain {string}` | il testo non è nel file |
-| `Then it finishes within {int} milliseconds` | tempo massimo di esecuzione |
+| `Then I get {json}` | the value that came back, matched exactly |
+| `Then the result is between {float} and {float}` | values that are approximate |
+| `Then the result has {int} items` | the shape, not the content |
+| `Then the result contains {string}` | a partial match |
+| `Then the result does not contain {string}` | the text is not there |
+| `Then the output contains {string}` | some text in the output |
+| `Then the output does not contain {string}` | the text is not in the output |
+| `Then the output matches {string}` | a regular expression |
+| `Then it succeeds` | exit code 0 |
+| `Then it fails` | an exit code other than 0 |
+| `Then the error {string} is raised` | the exception that was expected |
+| `Then I receive status {int}` | the HTTP status code |
+| `Then the body contains {string}` | the content of the answer |
+| `Then the body does not contain {string}` | the text is not in the answer |
+| `Then the file {string} exists` | the file was written |
+| `Then the file {string} does not exist` | it is not there, or it was removed |
+| `Then the file {string} contains {string}` | the content of the file |
+| `Then the file {string} does not contain {string}` | the text is not in the file |
+| `Then it finishes within {int} milliseconds` | the longest it may take |
 
-### I criteri in negativo
+### Criteria in the negative
 
-Le quattro frasi `does not contain` servono a scrivere i criteri che dicono
-cosa **non** deve succedere. Il caso tipico è una password: non basta che
-l'accesso funzioni, bisogna anche che la password non resti scritta in chiaro
-da nessuna parte.
+The four `does not contain` phrases are there to write the criteria that say
+what must **not** happen. The usual case is a password: it is not enough that
+signing in works, the password must also not be left in clear anywhere.
 
 ```gherkin
-  Scenario: AT-6.9 la password non viene conservata in chiaro
+  Scenario: AT-6.9 the password is not kept in clear
     When I call "signup" with ["mario@test.it", "segretissima"]
     Then the file "utenti.json" does not contain "segretissima"
 ```
 
-`the file ... does not contain` **pretende che il file esista.** Se il file non
-c'è il criterio fallisce, e non passa: un criterio che chiede l'assenza di
-qualcosa da un file che nessuno ha mai scritto passerebbe senza aver
-controllato niente, e proprio quello sulla password non deve passare per
-inerzia. Se una consegna può legittimamente non scrivere il file, lo si dice
-con `the file ... does not exist`.
+`the file ... does not contain` **demands that the file exist.** When the file
+is not there the criterion fails, and does not pass: a criterion asking for
+something to be absent from a file nobody ever wrote would pass without having
+checked anything, and the one about the password is exactly the one that must
+not pass by inertia. When a delivery may legitimately not write the file, that
+is said with `the file ... does not exist`.
 
-### La barra rovesciata
+### The backslash
 
-Su **OpenProject** cinque caratteri — underscore, asterisco, backtick e le
-due parentesi quadre — tornano con una barra rovesciata davanti, perché là
-hanno un significato nel markdown: la verifica la toglie, quindi si scrivono
-normalmente.
+On **OpenProject** five characters — the underscore, the asterisk, the
+backtick and the two square brackets — come back with a backslash in front of
+them, because there they mean something in markdown: the verification takes it
+off, so they are written as they are.
 
-Su **Taiga** e **Jira** il testo torna com'è stato scritto, quindi una barra
-rovesciata resta dov'è. Serve a chi scrive un'espressione regolare: su quei
-due sistemi `Then the output matches "\[ok\]"` cerca davvero le parentesi
-quadre.
+On **Taiga** and **Jira** the text comes back as it was written, so a
+backslash stays where it is. That matters to whoever writes a regular
+expression: on those two systems `Then the output matches "\[ok\]"` really does
+look for the square brackets.
 
-### `\n` dentro le virgolette
+### `\n` inside the quotes
 
-Un criterio non può contenere un vero ritorno a capo dentro una stringa fra
-virgolette, quindi `\n` ne vale uno. Vale allo stesso modo in tutte le frasi
-che scrivono o confrontano del testo: `Given the file "a.txt" contains
-"riga1\nriga2"` scrive due righe, e `Then the file "a.txt" contains
-"riga1\nriga2"` le ritrova. L'unica eccezione è `the output matches`, dove il
-testo è un'espressione regolare e `\n` lo interpreta già il motore delle
-espressioni.
+A criterion cannot hold a real newline inside a quoted string, so `\n` stands
+for one. It works the same way in every phrase that writes or compares text:
+`Given the file "a.txt" contains "line1\nline2"` writes two lines, and
+`Then the file "a.txt" contains "line1\nline2"` finds them again. The one
+exception is `the output matches`, where the text is a regular expression and
+`\n` is interpreted by the expression engine itself.
 
-## Etichette 
+## Labels
 
-| Etichetta | Cosa fa |
+| Label | What it does |
 |---|---|
-| `@manual` | **Per A.T NON AUTOMATIZZABILE:** il sistema lo salta e lo segnala al Product Owner |
+| `@manual` | **For an acceptance test that CANNOT BE AUTOMATED:** the system skips it and reports it to the Product Owner |
 
-Il criterio `@manual` non viene eseguito ma deve comunque essere
-valido. Un @manual scritto su due
-righe rende illeggibile l'intero file, è obbligatorio quindi scriverlo sempre senza `\n`.
+A `@manual` criterion is not run, but it still has to be valid. A `@manual`
+written over two lines makes the whole file unreadable, so it must always be
+written without `\n`.
 
-### Cosa fa il Product Owner con un `@manual`
+### What the Product Owner does with a `@manual`
 
-Quando i criteri automatici passano, la verifica firma sulla catena e si
-ferma. Il Product Owner legge i `@manual` nel report e ha due strade, entrambe
-sulla catena:
+When the automated criteria pass, the verification signs on the chain and
+stops. The Product Owner reads the `@manual` ones in the report and has two
+roads, both of them on the chain:
 
-- **firmare** con `approveDelivery`, che riempie la sua casella e lascia
-  passare il pagamento;
-- **rifiutare** con `rejectDelivery`, scrivendo nella transazione il motivo,
-  che resta nel registro degli eventi e il developer legge.
+- **signing** with `approveDelivery`, which fills his own box and lets the
+  payment through;
+- **refusing** with `rejectDelivery`, writing the reason into the transaction,
+  where it stays in the log of the events and the developer reads it.
 
-Il rifiuto non ha scadenza: un `@manual` che non si poteva misurare, e un
-lavoro scritto per rispondere ai criteri e a nient'altro, li vede solo una
-persona, e li vede quando li guarda. Il rifiuto riporta la user story a prima
-della consegna — le tre caselle tornano vuote, il commit si cancella — e il
-developer **ritrova il tempo che gli restava nel momento in cui ha
-consegnato**: l'attesa della risposta non la paga lui. Poi riconsegna con
-`submitWork`, e la verifica riparte dall'inizio sul nuovo commit.
+A refusal has no deadline: a `@manual` that could not be measured, and work
+written to answer the criteria and nothing else, are seen by a person alone,
+and seen when that person looks. A refusal takes the user story back to before
+the delivery — the three boxes go empty again, the commit is cleared — and the
+developer **gets back the time he had left at the moment he delivered**: the
+wait for an answer is not paid for by him. Then he delivers again with
+`submitWork`, and the verification starts over from the beginning on the new
+commit.
 
-Se invece il Product Owner non fa niente, dopo quattordici giorni la casella
-scade e il pagamento passa per silenzio: il rifiuto è una cosa che si fa, non
-una che succede.
+When the Product Owner does nothing instead, after fourteen days his box
+expires and the payment goes through by silence: a refusal is something that
+is done, not something that happens.
 
-## Intestazione della user story
+## The header of the user story
 
-| Campo | Cosa indica |
+| Field | What it names |
 |---|---|
-| `Module:` | file che espone le funzioni, serve per `I call` |
-| `Command:` | programma da eseguire, serve per `I run` |
-| `Service:` | indirizzo del servizio, serve per `I send` |
-| `Start:` | programma che avvia il servizio, serve per `Given the service is running` |
-| `Repository:` | repository del codice, se diverso da quello del progetto |
+| `Module:` | the file that holds the functions, needed by `I call` |
+| `Command:` | the program to run, needed by `I run` |
+| `Service:` | the address of the service, needed by `I send` |
+| `Start:` | the program that starts the service, needed by `Given the service is running` |
+| `Repository:` | the repository of the code, when it is not the one of the project |
 
-### Le user story con un servizio
+### User stories with a service
 
-Servono due campi, e fanno due cose diverse: `Start:` dice **come si accende**
-il servizio, `Service:` dice **dove risponde**.
+Two fields are needed, and they do two different things: `Start:` says **how
+it is switched on**, `Service:` says **where it answers**.
 
 ```gherkin
   Service: http://127.0.0.1:8000
-  Start: python3 servizio.py
+  Start: python3 service.py
 
-  Scenario: AT-7.1 la registrazione risponde
+  Scenario: AT-7.1 signing up answers
     Given the service is running
     When I send POST "/signup" with {"email": "mario@test.it", "password": "segretissima"}
     Then I receive status 201
     And the body does not contain "segretissima"
 ```
 
-`Given the service is running` avvia il programma di `Start:`, aspetta fino a
-quindici secondi che `Service:` risponda, e va avanti. Se il servizio muore
-subito, il criterio riporta il suo codice di uscita e quello che ha scritto,
-così si capisce perché non è partito.
+`Given the service is running` starts the program in `Start:`, waits up to
+fifteen seconds for `Service:` to answer, and carries on. When the service
+dies straight away, the criterion reports its exit code and whatever it wrote,
+so that it is clear why it did not come up.
 
-Il programma di `Start:` può anche limitarsi ad avviare il servizio vero e
-uscire: finché qualcuno risponde entro i quindici secondi, il criterio va
-avanti.
+The program in `Start:` may also do nothing more than start the real service
+and exit: as long as somebody answers within the fifteen seconds, the
+criterion carries on.
 
-**Il servizio viene spento alla fine di ogni criterio**, insieme a tutto quello
-che ha avviato a sua volta. Ogni criterio che usa il servizio deve quindi
-scrivere il proprio `Given the service is running`: non si eredita da quello
-prima. È voluto, perché un servizio rimasto in piedi risponderebbe al criterio
-successivo, che passerebbe contro un processo che nessuno ha avviato per lui.
+**The service is switched off at the end of every criterion**, together with
+everything it started in its turn. Every criterion that uses the service must
+therefore write its own `Given the service is running`: it is not inherited
+from the one before. That is on purpose, because a service left standing would
+answer the next criterion, which would then pass against a process nobody
+started for it.
 
-Per lo stesso motivo **l'indirizzo deve essere libero quando il criterio
-comincia**. Se qualcuno risponde già prima che il criterio avvii qualcosa, il
-criterio fallisce dicendolo: quella porta è di un processo che non appartiene
-a questa verifica, e misurarci contro non direbbe niente sulla consegna. Il
-caso tipico è un servizio che si è staccato dal proprio gruppo di processi ed
-è sopravvissuto allo spegnimento.
+For the same reason **the address has to be free when the criterion begins**.
+When somebody answers already, before the criterion has started anything, the
+criterion fails and says so: that port belongs to a process that is not part
+of this verification, and measuring ourselves against it would say nothing
+about the delivery. The usual case is a service that broke away from its own
+process group and survived the switching off.
 
-Il servizio risponde sul solo indirizzo locale: dentro il contenitore la rete
-verso l'esterno non esiste, e `127.0.0.1` continua a funzionare.
+The service answers on the local address alone: inside the container there is
+no network towards the outside, and `127.0.0.1` keeps working.
 
-Il collegamento fra la task e la user story sullo smart contract non si scrive
-qui: lo stabilisce il Product Owner sulla catena con `setExternalRef`, e la
-verifica lo legge da lì. Nell'intestazione non va quindi nessun identificativo
-della user story: il contratto dice chi lavora a cosa, la task dice cosa c'è
-da fare.
+The link between the task and the user story on the smart contract is not
+written here: the Product Owner sets it on the chain with `setExternalRef`,
+and the verification reads it from there. No identifier of the user story goes
+into the header, then: the contract says who is working on what, the task says
+what there is to do.
 
-`Repository:` accetta solo indirizzi nella forma `https://host/percorso` o
-`git@host:percorso`. Le altre forme vengono rifiutate, perché per alcune git
-esegue comandi sulla macchina che fa la verifica.
+`Repository:` accepts addresses in the form `https://host/path` or
+`git@host:path` alone. The other forms are refused, because for some of them
+git runs commands on the machine that does the verification.
 
-## Segnaposto
+## Placeholders
 
-| Segnaposto | Significato |
+| Placeholder | What it means |
 |---|---|
-| `{string}` | stringa, testo fra virgolette |
-| `{int}` | numero intero |
-| `{float}` | numero con la virgola |
-| `{word}` | parola singola, senza virgolette |
-| `{json}` | valore in notazione JSON |
+| `{string}` | a string, text between quotes |
+| `{int}` | a whole number |
+| `{float}` | a number with a decimal point |
+| `{word}` | a single word, without quotes |
+| `{json}` | a value in JSON notation |
 
-## Valori
+## Values
 
 
-| Tipo | Esempio |
+| Kind | Example |
 |---|---|
-| numero | `5` `3.5` `-2` |
-| testo | `"hello"` |
-| booleano | `true` `false` |
-| elenco | `[3, 1, 2]` |
-| oggetto | `{"email": "mario@test.it"}` |
-| niente | `null` |
+| number | `5` `3.5` `-2` |
+| text | `"hello"` |
+| boolean | `true` `false` |
+| list | `[3, 1, 2]` |
+| object | `{"email": "mario@test.it"}` |
+| nothing | `null` |
 
 
 ---
 
-## Esempio di utilizzo
+## An example of use
 
 ```gherkin
 Rule: US-4 Exporting records to CSV
@@ -256,9 +256,9 @@ Rule: US-4 Exporting records to CSV
     Then the Product Owner opens the CSV in a spreadsheet and checks that the columns are separated and the accents are readable
 ```
 
-### Output:
+### Output
 
-Criteri Automatici passano:
+When the automated criteria pass:
 
 ```
 US-4 Exporting records to CSV
@@ -271,10 +271,10 @@ Automated criteria: 2 of 2 passed
 To be checked by hand: 1
   AT-4.3 the file opens correctly in a spreadsheet
 
-Status: waiting for the Product Owner.
+Status: the automated criteria passed, waiting for the Product Owner.
 ```
 
-Se invece un criterio automatico fallisce:
+When an automated criterion fails instead:
 
 ```
 US-4 Exporting records to CSV
@@ -289,5 +289,6 @@ Automated criteria: 1 of 2 passed
 Status: rejected, the delivery does not meet the criteria.
 ```
 
-I criteri da verificare a mano non vengono elencati in caso di errore per non far perdere
-tempo al Product Owner su un lavoro che non ha ancora passato i controlli automatici.
+The criteria to be checked by hand are not listed when something failed, so
+that the Product Owner does not spend time on work that has not passed the
+automated checks yet.
