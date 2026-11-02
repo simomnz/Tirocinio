@@ -26,7 +26,10 @@ SERVICE = os.environ.get("BRIEF_SERVICE", "http://127.0.0.1:8070")
 
 def ask(path, payload=None):
     url = SERVICE.rstrip("/") + path
-    data = json.dumps(payload).encode("utf-8") if payload is not None else None
+    if payload is not None:
+        data = json.dumps(payload).encode("utf-8")
+    else:
+        data = None
 
     request = urllib.request.Request(url, data=data)
     if data is not None:

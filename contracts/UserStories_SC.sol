@@ -89,6 +89,7 @@ contract UserStories {
     event TestsPassed(uint indexed id, bytes20 commit, bytes32 criteriaHash);
     event CriteriaHashSet(uint indexed id, bytes32 criteriaHash);
     event DeliveryApproved(uint indexed id, address signer, uint8 slot);
+    event DeliveryRejected(uint indexed id, address signer, string reason);   // the reason lives in the log, where it costs nothing and stays for good
     event PaymentReleased(uint indexed id, address developer, uint amount);
     event PaymentOwed(uint indexed id, address developer, uint amount);   // the transfer did not get through, the credit is waiting
     event Withdrawn(address developer, uint amount);
@@ -218,6 +219,14 @@ contract UserStories {
         require(userStories[_id].criteriaHash != bytes32(0),
                 "The acceptance criteria have not been frozen");   // money goes in last, when what has to be done is settled
 
+        // the link to the task belongs to what has to be done just as much as
+        // the text of the criteria. Without it the verifier cannot read the
+        // task, so approvals[0] can never be written, and with that box empty
+        // nobody can approve and nothing can be paid: the money would sit on a
+        // user story that only an expired claim could free
+        require(bytes(userStories[_id].externalRef).length > 0,
+                "The user story is not linked to a task");
+
         userStories[_id].funded = true;
         userStories[_id].funder = msg.sender;                  // so we know who to pay back
 
@@ -272,7 +281,9 @@ contract UserStories {
 
         uint found = 0;
         for (uint id = 0; id < userStoryCount; id++) {          // first pass counts, so the array comes out the right length
-            if (isAvailable(id) && hasAllSkills(id, skills)) found++;
+            if (isAvailable(id) && hasAllSkills(id, skills)) {
+                found++;
+            }
         }
 
         uint[] memory available = new uint[](found);            // exactly as long as what was found: a trailing zero used to be indistinguishable from user story 0
@@ -352,8 +363,12 @@ contract UserStories {
     // never passed. Anyone could therefore wall the money in with two
     // transactions: claim it, declare a delivery, and never deliver
     function claimExpired(uint _id) public view returns (bool) {
-        if (!userStories[_id].taken) return false;
-        if (userStories[_id].effort == 0) return false;     // no class, no clock
+        if (!userStories[_id].taken) {
+            return false;
+        }
+        if (userStories[_id].effort == 0) {   // no class, no clock
+            return false;
+        }
 
         return block.timestamp > userStories[_id].claimedAt +
                                  userStories[_id].effort * WEEKS_PER_EFFORT;
@@ -364,8 +379,12 @@ contract UserStories {
     // verifier that has not got to it yet, and it runs out, so it can never
     // become the permanent lock that workSubmitted used to be
     function verificationPending(uint _id) public view returns (bool) {
-        if (!userStories[_id].workSubmitted) return false;
-        if (userStories[_id].approvals[0]) return false;    // already recorded, the window is over
+        if (!userStories[_id].workSubmitted) {
+            return false;
+        }
+        if (userStories[_id].approvals[0]) {   // already recorded, the window is over
+            return false;
+        }
         return block.timestamp <= userStories[_id].submittedAt + VERIFICATION_WINDOW;
     }
 
@@ -373,8 +392,12 @@ contract UserStories {
     // does not put it back by itself: the criteria have been seen by the
     // developer who dropped it, so the product owner reopens it on purpose
     function isAvailable(uint _id) public view returns (bool) {
-        if (!userStories[_id].funded) return false;
-        if (userStories[_id].paid) return false;
+        if (!userStories[_id].funded) {
+            return false;
+        }
+        if (userStories[_id].paid) {
+            return false;
+        }
         return !userStories[_id].taken;
     }
 
@@ -473,20 +496,69 @@ contract UserStories {
         emit DeliveryApproved(_id, msg.sender, slot);
     }
 
+    // the product owner, or the client, sends the work back after looking at
+    // it. There is no window on this: a delivery written to answer the
+    // criteria and nothing else passes every automated check, and the only
+    // one who can see that is a person. Taking that away would mean the
+    // machine has the last word on work it was never able to judge.
+    //
+    // It is not a way to avoid paying. The criteria are frozen on chain and
+    // the reason is in the log, so a product owner who keeps refusing good
+    // work leaves the whole record of it behind him, and answers for it
+    // somewhere else.
+    function rejectDelivery(uint _id, string calldata _reason) public {
+        require(userStories[_id].paid == false, "Already paid");
+        require(userStories[_id].workSubmitted == true, "There is no delivery to reject");
+        require(userStories[_id].approvals[0] == true, "The automated criteria have not passed yet");
+
+        require(msg.sender == productOwner ||
+                (client != address(0) && msg.sender == client),
+                "You are not allowed to reject");
+
+        // the clock the developer works against stops the moment he hands in
+        // and starts again here. Moving claimedAt forward by the time the
+        // review took leaves him exactly the days he had left when he
+        // delivered: waiting for an answer is not his to pay for
+        userStories[_id].claimedAt += block.timestamp - userStories[_id].submittedAt;
+
+        // the three boxes go back to empty. The automated one too, because
+        // the next delivery is different work and has to be measured again,
+        // and because it is the box that holds reopenUserStory shut: leaving
+        // it full would mean the money could never be freed
+        userStories[_id].approvals[0] = false;
+        userStories[_id].approvals[1] = false;
+        userStories[_id].approvals[2] = false;
+
+        userStories[_id].workSubmitted = false;
+        userStories[_id].commit = bytes20(0);
+        userStories[_id].testsPassedAt = 0;        // stops the review clock
+        userStories[_id].submittedAt = 0;          // last of all: the line that moves claimedAt reads it
+
+        emit DeliveryRejected(_id, msg.sender, _reason);
+    }
+
     // true when the people who had to review have run out of time
     function reviewExpired(uint _id) public view returns (bool) {
-        if (userStories[_id].testsPassedAt == 0) return false;      // the clock has not started
+        if (userStories[_id].testsPassedAt == 0) {   // the clock has not started
+            return false;
+        }
         return block.timestamp > userStories[_id].testsPassedAt + REVIEW_WINDOW;
     }
 
     // true when every signature that is needed is in place, or the time to
     // give it has run out. The tests are never waived: that one is the machine
     function isReadyForPayment(uint _id) public view returns (bool) {
-        if (!userStories[_id].approvals[0]) return false;
+        if (!userStories[_id].approvals[0]) {
+            return false;
+        }
 
         bool expired = reviewExpired(_id);
-        if (!userStories[_id].approvals[1] && !expired) return false;
-        if (client != address(0) && !userStories[_id].approvals[2] && !expired) return false;   // two signatures are enough without a client
+        if (!userStories[_id].approvals[1] && !expired) {
+            return false;
+        }
+        if (client != address(0) && !userStories[_id].approvals[2] && !expired) {   // two signatures are enough without a client
+            return false;
+        }
         return true;
     }
 
@@ -527,7 +599,9 @@ contract UserStories {
     {
         uint count = 0;
         for (uint i = 0; i < userStoryCount; i++) {            // first pass counts, because the length must be known up front
-            if (developer == userStories[i].developer) count++;
+            if (developer == userStories[i].developer) {
+                count++;
+            }
         }
 
         UserStory[] memory result = new UserStory[](count);

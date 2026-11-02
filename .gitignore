@@ -1,8 +1,22 @@
 # Credenziali: non devono mai finire nel repository
-vocabolario/credentials.sh
-vocabolario/credenziali*
-vocabolario/credentials*
+verificatore/credentials.sh
+verificatore/credenziali*
+verificatore/credentials*
 *.key
+
+# Dati di prova con password dentro
+verificatore/utenti.json
+
+# Stato del verificatore: ricorda, non decide. La catena e' l'autorita', quindi
+# questi file si possono cancellare senza perdere niente, e versionarli
+# significherebbe portarsi in giro la memoria di un'altra macchina
+verificatore/attempted.json
+verificatore/last-block.txt
+verificatore/contracts-seen.json
+
+# Prodotto dalla verifica: il testo dei criteri arriva dalla task, qui ne resta
+# solo una copia dell'ultimo giro
+verificatore/features/*.feature
 
 # Node e Hardhat
 node_modules/
@@ -20,10 +34,6 @@ __pycache__/
 .states/
 .workspaces/
 
-# Stato locale del sorvegliante e dell'ascoltatore
-vocabolario/attempted.json
-vocabolario/last-block.txt
-vocabolario/utenti.json*.patch
+# Strumenti di analisi e toppe locali
 .ua/
-vocabolario/utenti.json
 *.patch

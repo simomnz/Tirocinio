@@ -29,6 +29,15 @@ def key_for(contract, story_id):
     return contract.address.lower() + ":" + str(story_id)
 
 
+# what the note writes down about a delivery. The commit alone is not enough:
+# the product owner can send the work back, and the developer can answer by
+# declaring the same commit again, having changed nothing but the criteria he
+# is being judged against. The moment of the delivery tells the two apart, so
+# the second one is verified instead of being skipped in silence for good
+def stamp_of(story):
+    return story["commit"].hex() + ":" + str(story["submittedAt"])
+
+
 def load_state():
     try:
         with open(STATE, encoding="utf-8") as f:
@@ -68,7 +77,7 @@ def pending():
                   "linked to it, skipped", file=sys.stderr)   # said out loud: it is a mistake somebody has to fix
             continue
 
-        if state.get(key_for(contract, story_id)) == story["commit"].hex():
+        if state.get(key_for(contract, story_id)) == stamp_of(story):
             continue                          # this very delivery was already tried
 
         waiting.append(story_id)
@@ -76,14 +85,14 @@ def pending():
     return waiting
 
 
-# remembers which delivery was tried, by commit and not by identifier, so that
-# a developer who delivers again is verified again
+# remembers which delivery was tried, by commit and moment of delivery and not
+# by identifier, so that a developer who delivers again is verified again
 def mark(story_id):
     _, contract = blockchain.connect()
     story = blockchain.read_story(contract, int(story_id))
 
     state = load_state()
-    state[key_for(contract, story_id)] = story["commit"].hex()
+    state[key_for(contract, story_id)] = stamp_of(story)
     save_state(state)
 
 

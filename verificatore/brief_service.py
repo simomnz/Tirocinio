@@ -32,8 +32,15 @@ challenges = {}                               # nonce -> when it was handed out
 
 def forget_old_challenges():
     now = time.time()
-    for nonce in [n for n, born in challenges.items()
-                  if now - born > CHALLENGE_LIFE]:
+
+    # the list is built first and the deleting happens after: taking keys out of
+    # a dictionary while it is being walked raises an error
+    expired = []
+    for nonce, born in challenges.items():
+        if now - born > CHALLENGE_LIFE:
+            expired.append(nonce)
+
+    for nonce in expired:
         del challenges[nonce]
 
 
@@ -137,7 +144,7 @@ class Brief(BaseHTTPRequestHandler):
 
         title, description, _ = fetch_criteria.READERS[system](key)
 
-        narrative = story_only(fetch_criteria.clean(description))
+        narrative = story_only(fetch_criteria.clean(description, system))
         if narrative is None:                 # no criteria found, so nothing was cut
             return 404, {"error": "This task does not hold acceptance criteria, "
                                   "so the story cannot be served without them"}

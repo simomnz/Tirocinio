@@ -5,15 +5,16 @@ pragma solidity >=0.8.18 <0.9.0;
 
 contract Skill {
 
-    // indirizzo pubblicatore del contratto
+    // the address that published the contract
     address public owner;
 
-    // correzione: nella versione di Alice chiunque poteva chiamare addSkill, non so se fosse voluto però in quel modo chiunque poteva autocertificarsi 
+    // fix: in the earlier version anyone could call addSkill. Whether that was
+    // meant or not, it let anybody certify their own skills
 
 
     mapping(address => bool) public certifiers;
 
-    // struttura per le skills
+    // the shape of a skill
     struct SkillData {
         uint idSkill;
         uint duration;
@@ -25,7 +26,7 @@ contract Skill {
         uint numberOfSkills;
     }
 
-    // mappa le skill per ogni utente
+    // the skills held by each user
     mapping(address => ListSkills) public skillList;
 
     event CertifierAdded(address certifier);
@@ -46,7 +47,7 @@ contract Skill {
         _;
     }
 
-    // il proprietario puo' aggiungere nuovi certificatori
+    // the owner can add new certifiers
     function addCertifier(address certifier) public onlyOwner {
         certifiers[certifier] = true;
         emit CertifierAdded(certifier);
@@ -60,7 +61,7 @@ contract Skill {
         return skills;
     }
 
-    // correzione: ho aggiunto "onlyCertifier"
+    // fix: onlyCertifier added here
     function addSkill(address developer, uint _idSkill, uint _duration, uint _generalScore) public onlyCertifier {
         uint numberOfSkillsTemp = skillList[developer].numberOfSkills;
 

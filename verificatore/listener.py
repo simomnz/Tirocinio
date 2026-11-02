@@ -51,14 +51,24 @@ def save_cursor(block):
         f.write(str(block) + "\n")
 
 
-# the answers already received about each contract. A cache and nothing more:
-# deleting it only means asking the chain again
+# the contracts that have named this verifier. Only the yes are kept, so the
+# file is an answer that cannot go stale: a contract stops inviting us by
+# calling removeVerifier, and the next round reads that from the chain anyway.
+# A no written down by an older version is dropped while reading, which is all
+# the migration this needs
 def load_known():
     try:
         with open(KNOWN, encoding="utf-8") as f:
-            return json.load(f)
+            stored = json.load(f)
     except (FileNotFoundError, ValueError):
         return {}
+
+    known = {}
+    for address, answer in stored.items():
+        if answer:
+            known[address] = True
+
+    return known
 
 
 def save_known(known):
@@ -74,6 +84,28 @@ def invited(address):
         return bool(blockchain.is_invited(contract))
     except Exception:
         return False                          # not one of ours at all
+
+
+# whether this contract has named us, asking the chain the first time it is
+# met. Only a yes is written down. A no lives in memory and lasts the current
+# round alone: it used to be saved, so a company that published the contract
+# and called addVerifier afterwards was remembered as a no and never asked
+# again, and stayed ignored for good without anybody being told
+def names_us(address, known, refused):
+    if address in known:
+        return True
+    if address in refused:
+        return False
+
+    if invited(address):
+        known[address] = True
+        save_known(known)
+        print("Invited by " + address)
+        return True
+
+    refused.add(address)
+    print("Ignoring " + address)
+    return False
 
 
 def ask_jenkins(path, address):
@@ -112,6 +144,7 @@ def main():
 
     cursor = load_cursor(w3)
     known = load_known()
+    save_known(known)                         # written back at once, so a no left by an older version leaves the file too and not only the memory
 
     print("Verifier " + blockchain.verifier_address())
     print("Listening for deliveries from block " + str(cursor))
@@ -122,6 +155,7 @@ def main():
             latest = w3.eth.block_number
 
             asked = set()                     # contracts already sent to Jenkins in this round
+            refused = set()                   # and the ones that answered no, forgotten when the round ends
 
             while cursor <= latest:
                 last = min(cursor + WINDOW - 1, latest)   # one window at a time, so a long catch up does not ask too much at once
@@ -135,12 +169,10 @@ def main():
                 for log in logs:
                     address = Web3.to_checksum_address(log["address"])
 
-                    if address not in known:              # a contract never met before
-                        known[address] = invited(address)
-                        save_known(known)
-                        print(("Invited by " if known[address] else "Ignoring ") + address)
+                    if not names_us(address, known, refused):
+                        continue                          # not ours, and the question will be asked again next round
 
-                    if not known[address] or address in asked:
+                    if address in asked:
                         continue                          # one build covers every delivery that contract is holding
 
                     asked.add(address)

@@ -5,9 +5,12 @@
 # automated tests passed.
 #
 #   python3 verify.py openproject 1117
-#   python3 verify.py openproject 1117 --write --chain
+#   python3 verify.py openproject 1117 --write
 #   python3 verify.py --story 0 --write --chain
 #   python3 verify.py openproject 1117 --hash
+#
+# --chain needs --story: which user story a delivery belongs to is written on
+# the chain and nowhere else.
 #
 # With --story everything comes from the contract: which task the story maps
 # to, and which commit the developer declared as the delivery.
@@ -24,6 +27,7 @@
 import json
 import os
 import re
+import secrets
 import shutil
 import subprocess
 import sys
@@ -39,6 +43,13 @@ IMAGE = os.environ.get("VERIFY_IMAGE", "criteria-sandbox:1")
 TIMEOUT = int(os.environ.get("VERIFY_TIMEOUT", "600"))  # seconds, against a delivery that never ends
 SANDBOX = os.environ.get("VERIFY_SANDBOX", "on") != "off"   # off runs on this machine, for trying things out only
 
+# what the run answers when it was stopped instead of finishing. 124 is the
+# number the timeout command uses, and any number does as long as it cannot be
+# one the criteria themselves could answer: it tells a delivery that never ends
+# apart from a breakdown of this system, and only the first of the two is the
+# developer's business
+EXPIRED = 124
+
 
 # the shapes of address git may be sent to. Anything else is refused, because
 # git reads some of them as a command to run: "ext::sh -c ..." executes on this
@@ -46,6 +57,35 @@ SANDBOX = os.environ.get("VERIFY_SANDBOX", "on") != "off"   # off runs on this m
 # ours. The clone happens before any container exists, so nothing else guards
 # this: here is the only place it can be stopped
 ALLOWED_REPOSITORY = re.compile(r"^(https://[\w.-]+/[\w./~-]+|git@[\w.-]+:[\w./~-]+)$")
+
+# the mark the run puts in front of the outcome, the same string environment.py
+# writes. It is followed by the secret of the run, so a line can be read only
+# if it was written by our own code
+MARKER = "__VERIFY_OUTCOME__"
+
+
+# picks the outcome out of everything the run printed. Only a line carrying the
+# secret of this run is read: the delivered code writes on the same stream, but
+# the secret went in on a standard input that was emptied before the first
+# criterion started, so it never reached it.
+#
+# None means there is no outcome to believe, and that is never a refused
+# delivery: it is this system that could not answer
+def sealed_outcome(output, nonce):
+    if not nonce:
+        return None                     # without a secret any line would do, and that is no check at all
+
+    found = None
+    for line in output.split("\n"):
+        if line.startswith(MARKER + nonce):
+            found = line[len(MARKER) + len(nonce):]   # the last one, as the answer is written once and at the end
+
+    if found is None:
+        return None
+    try:
+        return json.loads(found)
+    except ValueError:
+        return None
 
 
 # true when git may be pointed at this address
@@ -85,7 +125,10 @@ def repository_for(system, project, body, requested):
 
             chosen = projects[name]
 
-    return chosen if repository_allowed(chosen) else None
+    if repository_allowed(chosen):
+        return chosen
+    else:
+        return None
 
 
 # brings the repository into the folder at the exact commit asked for.
@@ -125,15 +168,18 @@ def clone_at(repository, folder, commit):
 # no network out, no privileges, a time and memory ceiling, and nothing of
 # ours to reach.
 #
-# Three separate folders, and not one: the criteria and our vocabulary go in
-# read only, so the code being judged cannot rewrite the questions; the
-# delivered code goes in read only on a path of its own; and the only writable
-# mount holds the outcome. Before, all three lived in the same writable tree,
-# so the delivered code sat next to the file that holds its own verdict
-def run_in_sandbox(run_dir, code, out_dir):
+# Two folders, both read only: the criteria and our vocabulary on one side, so
+# the code being judged cannot rewrite the questions, and the delivered code on
+# a path of its own. There is no writable mount at all. There used to be one,
+# for the outcome, and that was the last thing the delivered code could still
+# get at: same container, same user, so it could rewrite the verdict on itself.
+# The outcome comes back on standard output instead, marked with the secret
+# that goes in on standard input
+def run_in_sandbox(run_dir, code, nonce):
     name = "verify-" + str(os.getpid())
     command = [
         RUNNER, "run", "--rm", "--name", name,
+        "--interactive",                                # stdin stays open, which is how the secret gets in
         "--network", "none",                            # loopback still works, the outside does not
         "--user", str(os.getuid()) + ":" + str(os.getgid()),   # the files it writes belong to us, not to root
         "--memory", "512m", "--cpus", "1", "--pids-limit", "256",
@@ -144,50 +190,59 @@ def run_in_sandbox(run_dir, code, out_dir):
         "--security-opt", "no-new-privileges",
 
         # the image itself cannot be changed, and the one writable place it is
-        # left cannot be used to run a program from
+        # left is a throwaway that cannot be used to run a program from. It
+        # goes away with the container, so nothing written there comes back
         "--read-only",
         "--tmpfs", "/tmp:rw,noexec,nosuid,nodev,size=64m",
 
         # Z relabels the folder for SELinux, which otherwise denies the container
         "--volume", run_dir + ":/run:ro,Z",             # the criteria and the vocabulary
         "--volume", code + ":/code:ro,Z",               # the delivered code, which has nothing to write here
-        "--volume", out_dir + ":/out:rw,Z",             # the outcome, the only thing that comes back
 
         "--workdir", "/run",
         "--env", "CODE_ROOT=/code",                     # the path inside the container, not the one outside
         "--env", "HOME=/tmp",
         "--env", "PYTHONDONTWRITEBYTECODE=1",
         IMAGE,
-        "behave", "-f", "json", "-o", "/out/outcome.json",
+        "behave", "-f", "plain",                        # on screen only, for when something has to be looked at
     ]
 
     try:
-        return subprocess.run(command, capture_output=True, text=True,
-                              timeout=TIMEOUT)
+        return subprocess.run(command, input=nonce, capture_output=True,
+                              text=True, timeout=TIMEOUT)
     except subprocess.TimeoutExpired:
         subprocess.run([RUNNER, "kill", name], capture_output=True)   # the container outlives the client that started it
         return subprocess.CompletedProcess(
-            command, 1, "",
+            command, EXPIRED, "",
             "The criteria did not finish within " + str(TIMEOUT) + " seconds")
 
 
 # runs them straight on this machine. Only for trying things out: here the
 # delivered code has whatever the user running it has
-def run_without_sandbox(run_dir, code, out_dir):
+def run_without_sandbox(run_dir, code, nonce):
     environment = {
         "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
         "HOME": os.environ.get("HOME", "/tmp"),     # kept: Python finds the installed packages starting from here
         "LANG": os.environ.get("LANG", "C.UTF-8"),  # without it Python reads the files as ASCII
         "CODE_ROOT": code,
     }
-    return subprocess.run(["behave", "-f", "json",
-                           "-o", os.path.join(out_dir, "outcome.json")],
-                          cwd=run_dir, env=environment,
-                          capture_output=True, text=True, timeout=TIMEOUT)
+    try:
+        return subprocess.run(["behave", "-f", "plain"],
+                              cwd=run_dir, env=environment, input=nonce,
+                              capture_output=True, text=True, timeout=TIMEOUT)
+    except subprocess.TimeoutExpired:         # answered the same way as the sandbox, or the two paths would disagree
+        return subprocess.CompletedProcess(
+            ["behave"], EXPIRED, "",
+            "The criteria did not finish within " + str(TIMEOUT) + " seconds")
 
 
 def main():
-    arguments = [a for a in sys.argv[1:] if not a.startswith("--")]   # values and options kept apart, so their order does not matter
+    # values and options kept apart, so their order does not matter
+    arguments = []
+    for a in sys.argv[1:]:
+        if not a.startswith("--"):
+            arguments.append(a)
+
     write_back = "--write" in sys.argv
     sign_chain = "--chain" in sys.argv
     print_hash = "--hash" in sys.argv               # prints the fingerprint of the criteria and stops
@@ -225,11 +280,22 @@ def main():
     else:
         if len(arguments) < 2:
             print("Usage: verify.py <openproject|taiga|jira> <id> [repository] "
-                  "[--write] [--chain]", file=sys.stderr)
+                  "[--write]", file=sys.stderr)
             print("       verify.py --story <id> [--write] [--chain]", file=sys.stderr)
             return 2
         system, key = arguments[0], arguments[1]
-        requested = arguments[2] if len(arguments) > 2 else None   # the repository is optional
+        if len(arguments) > 2:                                     # the repository is optional
+            requested = arguments[2]
+        else:
+            requested = None
+
+    # said now and not at the end. It used to print a line and answer 0, so a
+    # pipeline asking for a signature it never got was told everything went
+    # well
+    if sign_chain and story_id is None:
+        print("--chain needs --story: which user story this is comes from the "
+              "chain and from nowhere else", file=sys.stderr)
+        return 2
 
     if system not in fetch_criteria.READERS:            # reuses the dictionary instead of repeating the list
         print("Unknown system: " + system, file=sys.stderr)
@@ -239,7 +305,7 @@ def main():
 
     # --- the criteria, from the project management system ---
     title, description, project = fetch_criteria.READERS[system](key)
-    body = fetch_criteria.clean(description)
+    body = fetch_criteria.clean(description, system)
 
     if not re.search(r"^\s*Scenario", body, re.M):
         print("No acceptance criteria found in " + system + " " + key,
@@ -275,12 +341,11 @@ def main():
 
     work = tempfile.mkdtemp(prefix="verify-")           # everything lives here and is removed at the end
     try:
-        # three folders, kept apart so the container can mount them with
-        # different rights: ours to read, the delivery to read, the outcome to write
+        # two folders, kept apart so the container can mount each one read
+        # only on a path of its own: ours and the delivery's. Nothing is
+        # mounted writable, and the outcome comes back on standard output
         code = os.path.join(work, "code")               # the delivered code
         run_dir = os.path.join(work, "run")             # the criteria and our vocabulary
-        out_dir = os.path.join(work, "out")             # what comes back
-        os.makedirs(out_dir)
 
         header = [system + " " + key + " - " + title]
         if story_id is not None:
@@ -319,15 +384,47 @@ def main():
             f.write("Feature: " + title + "\n\n" + body + "\n")
 
         # --- running ---
-        outcome = os.path.join(out_dir, "outcome.json")
-        if SANDBOX:
-            run = run_in_sandbox(run_dir, code, out_dir)
-        else:
-            run = run_without_sandbox(run_dir, code, out_dir)   # the json is read, not the screen output, which changes between versions
+        # the secret of this run, made here and never written to disk. It is
+        # what tells our own answer apart from anything the delivered code
+        # prints on the same stream
+        nonce = secrets.token_hex(32)
 
-        if not os.path.exists(outcome):                 # no report means behave could not even read the criteria
-            print("behave could not run the criteria:", file=sys.stderr)
-            print((run.stdout + run.stderr).strip(), file=sys.stderr)
+        if SANDBOX:
+            run = run_in_sandbox(run_dir, code, nonce)
+        else:
+            run = run_without_sandbox(run_dir, code, nonce)
+
+        outcome = sealed_outcome(run.stdout, nonce)
+        if outcome is None:                             # no sealed answer: behave did not get to the end of the criteria
+            # a delivery that never ends, or that eats the machine until the
+            # kernel stops it, is an invalid delivery and not a breakdown of
+            # this system. It used to come back as 2, so nothing was written
+            # anywhere, the user story stayed in the queue, and the next round
+            # ran into the same wall: a red build for ever and a developer who
+            # was never told why. The outcome cannot be sealed in these two
+            # cases, because the line comes out at the end of the criteria and
+            # the criteria never got there
+            stopped = None
+            if run.returncode == EXPIRED:
+                stopped = run.stderr.strip()
+            elif run.returncode == 137:                 # 128 + SIGKILL: the container was killed from outside
+                stopped = ("The criteria did not finish: the container was "
+                           "killed, which is what the memory and process "
+                           "limits do")
+
+            if stopped is not None:
+                print(stopped, file=sys.stderr)
+                if write_back:
+                    report.write(system, key, project,
+                                 "\n".join(header + ["", "Status: rejected, " + stopped]),
+                                 False)
+                    print("Written back to " + system + ".")
+                return 1
+
+            # anything else is this system that could not answer, and saying so
+            # to the developer would blame him for our own breakage
+            print("The run did not send back a sealed outcome:", file=sys.stderr)
+            print((run.stdout + run.stderr).strip()[-2000:], file=sys.stderr)
             return 2
 
         text, passed = report.summary(outcome, header)
@@ -335,8 +432,7 @@ def main():
 
         # behave answers zero only when every scenario it ran passed, so a
         # green report next to a non-zero exit code means the two do not
-        # describe the same run. Nothing is signed on a disagreement: the
-        # outcome file is the one thing the delivered code could get at
+        # describe the same run. Nothing is signed on a disagreement
         if passed and run.returncode != 0:
             print("The report says the criteria passed but the run ended with "
                   + str(run.returncode) + ": nothing is recorded",
@@ -352,20 +448,18 @@ def main():
         # management system that was down took the signature with it, and the
         # tests had passed. The fact belongs on the chain, the report is the
         # account of it
+        # which user story this is comes from the chain and from nowhere else.
+        # It used to be possible to name it in the header of the task, with a
+        # Blockchain: line, and that was a way in for the wrong number: the
+        # task says what has to be done, the contract says who is working on
+        # what. setExternalRef ties the two together, and reading it back is
+        # what --story does
         if sign_chain and passed:
             import blockchain
 
-            target = story_id
-            if target is None:                          # without --story the identifier is read from the header
-                found = re.search(r"^\s*Blockchain:\s*(\d+)\s*$", body, re.M)
-                target = found.group(1) if found else None
-
             print()
-            if target is None:
-                print("No Blockchain: field in the header, nothing recorded")
-            else:
-                blockchain.record_tests_passed(target, full_revision.stdout.strip(),
-                                               blockchain.criteria_hash(body))   # the very text that was run
+            blockchain.record_tests_passed(story_id, full_revision.stdout.strip(),
+                                           blockchain.criteria_hash(body))   # the very text that was run
 
         # --- the outcome goes back into the project management system ---
         if write_back:
@@ -373,7 +467,11 @@ def main():
             print()
             print("Written back to " + system + ".")
 
-        return 0 if passed else 1                       # 0 the criteria pass, 1 they do not, 2 the system could not even try
+        # 0 the criteria pass, 1 they do not, 2 the system could not even try
+        if passed:
+            return 0
+        else:
+            return 1
 
     finally:
         shutil.rmtree(work, ignore_errors=True)         # removed even when something failed halfway

@@ -58,9 +58,20 @@ def verifier_address():
 # address means one filter covers every contract on the chain, so no list of
 # clients has to be kept anywhere
 def event_topic(name):
-    entry = next(e for e in ABI
-                 if e.get("type") == "event" and e.get("name") == name)
-    signature = name + "(" + ",".join(i["type"] for i in entry["inputs"]) + ")"
+    entry = None
+    for e in ABI:
+        if e.get("type") == "event" and e.get("name") == name:
+            entry = e
+            break
+
+    if entry is None:
+        raise ValueError("No such event in the ABI: " + name)
+
+    input_types = []
+    for i in entry["inputs"]:
+        input_types.append(i["type"])
+
+    signature = name + "(" + ",".join(input_types) + ")"
     return Web3.keccak(text=signature)
 
 
@@ -107,14 +118,26 @@ def is_invited(contract):
 # reads a user story and returns it by field name instead of by position,
 # so that adding a field to the struct cannot silently shift the values
 def read_story(contract, story_id):
-    fields = next(entry["outputs"][0]["components"] for entry in ABI
-                  if entry.get("name") == "getUserStory")
+    fields = None
+    for entry in ABI:
+        if entry.get("name") == "getUserStory":
+            fields = entry["outputs"][0]["components"]
+            break
+
+    if fields is None:
+        raise ValueError("getUserStory is not in the ABI")
+
     values = contract.functions.getUserStory(story_id).call()
-    return {field["name"]: value for field, value in zip(fields, values)}
+
+    story = {}
+    for field, value in zip(fields, values):
+        story[field["name"]] = value
+
+    return story
 
 
-# returns what the developer declared on chain for a user story:
-# which task it maps to, and which commit is the delivery
+# returns what the developer declared on chain for a user story, which task it
+# maps to and which commit is the delivery
 def get_delivery(story_id, address=None):
     _, contract = connect(address)
 
