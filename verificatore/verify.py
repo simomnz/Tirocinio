@@ -236,58 +236,236 @@ def run_without_sandbox(run_dir, code, nonce):
             "The criteria did not finish within " + str(TIMEOUT) + " seconds")
 
 
-def main():
-    # values and options kept apart, so their order does not matter
+# splits the command line into the plain values and the --story option, so
+# that the order of the options does not matter. Gives back the values and the
+# identifier on the chain (None when --story is not there), or None when
+# --story is there with nothing after it
+def read_command_line():
     arguments = []
     for a in sys.argv[1:]:
         if not a.startswith("--"):
             arguments.append(a)
 
-    write_back = "--write" in sys.argv
-    sign_chain = "--chain" in sys.argv
-    print_hash = "--hash" in sys.argv               # prints the fingerprint of the criteria and stops
     story_id = None
 
     if "--story" in sys.argv:                           # chain driven: the contract says what to verify
         position = sys.argv.index("--story") + 1
         if position >= len(sys.argv):
             print("--story needs the identifier on the chain", file=sys.stderr)
-            return 2
+            return None
         story_id = sys.argv[position]
         if story_id in arguments:
             arguments.remove(story_id)                  # it is a value, but it belongs to the option
+
+    return arguments, story_id
+
+
+# asks the contract what to verify: which system and task the user story maps
+# to, which commit the developer declared and which criteria were frozen.
+# Gives them back in this order, or None when the chain could not be read
+def task_from_chain(story_id):
+    import blockchain
+    try:
+        delivery = blockchain.get_delivery(story_id)
+    except Exception as error:
+        print(str(error), file=sys.stderr)
+        return None
+    system = delivery["system"]
+    key = delivery["task"]
+    declared_commit = delivery["commit"]
+    frozen_criteria = delivery["criteriaHash"]
+    print("User story " + str(story_id) + " on chain")
+    print("  task     " + system + " " + key)
+    print("  commit   " + declared_commit)
+    print("  developer " + delivery["developer"])
+    print()
+    return system, key, declared_commit, frozen_criteria
+
+
+# takes the system, the task and the optional repository from the values on
+# the command line. Gives them back in this order, or None when there are too
+# few of them
+def task_from_command_line(arguments):
+    if len(arguments) < 2:
+        print("Usage: verify.py <openproject|taiga|jira> <id> [repository] "
+              "[--write]", file=sys.stderr)
+        print("       verify.py --story <id> [--write] [--chain]", file=sys.stderr)
+        return None
+    system, key = arguments[0], arguments[1]
+    if len(arguments) > 2:                                     # the repository is optional
+        requested = arguments[2]
+    else:
+        requested = None
+    return system, key, requested
+
+
+# reads the user story from the project management system and cleans it. Gives
+# back the title, the criteria and the project, or None when the task has no
+# criteria to run
+def read_criteria(system, key):
+    title, description, project = fetch_criteria.READERS[system](key)
+    body = fetch_criteria.clean(description, system)
+
+    if not re.search(r"^\s*Scenario", body, re.M):
+        print("No acceptance criteria found in " + system + " " + key,
+              file=sys.stderr)
+        print("Somebody has to write them in the task: this is not a delivery "
+              "that failed.", file=sys.stderr)
+        return None
+
+    return title, body, project
+
+
+# true when the criteria in the task are the ones frozen on chain. Without a
+# frozen hash (a run started from the command line) there is nothing to
+# compare with
+def criteria_are_the_frozen_ones(body, frozen_criteria):
+    if frozen_criteria is None:
+        return True
+
+    import blockchain
+    running = blockchain.criteria_hash(body)
+    if running != frozen_criteria:
+        print("These are not the criteria agreed on chain", file=sys.stderr)
+        print("  agreed " + blockchain.prefixed(frozen_criteria), file=sys.stderr)
+        print("  found  " + blockchain.prefixed(running), file=sys.stderr)
+        print("The text in the task was changed after it was frozen: until "
+              "somebody puts it back, or the user story is reopened with "
+              "the new criteria, this delivery cannot be verified.",
+              file=sys.stderr)
+        return False
+    return True
+
+
+# says why the delivery is refused, on screen and, when asked, in the task.
+# Always answers 1, the code of a refused delivery
+def refuse_delivery(system, key, project, header, reason, write_back):
+    print(reason, file=sys.stderr)
+    if write_back:
+        report.write(system, key, project,
+                     "\n".join(header + ["", "Status: rejected, " + reason]),
+                     False)
+        print("Written back to " + system + ".")
+    return 1
+
+
+# reads the commit that was checked out, in the two forms needed: the short
+# one for the report and the forty digits for the chain
+def read_revisions(code):
+    revision = subprocess.run(["git", "rev-parse", "--short", "HEAD"],
+                              cwd=code, capture_output=True, text=True)
+    full_revision = subprocess.run(["git", "rev-parse", "HEAD"],
+                                   cwd=code, capture_output=True, text=True)
+    return revision.stdout.strip(), full_revision.stdout.strip()
+
+
+# lays out the folder behave runs in: our own environment and vocabulary, and
+# the criteria written as the feature to run
+def prepare_run(run_dir, title, body):
+    folder = os.path.join(run_dir, "features")
+    os.makedirs(os.path.join(folder, "steps"))      # behave expects exactly this layout
+    shutil.copy(os.path.join(VERIFIER, "features", "environment.py"), folder)
+    shutil.copy(os.path.join(VERIFIER, "features", "steps", "vocabulary.py"),
+                os.path.join(folder, "steps"))      # it comes from us, never from the delivered repository
+
+    with open(os.path.join(folder, "story.feature"), "w", encoding="utf-8") as f:
+        f.write("Feature: " + title + "\n\n" + body + "\n")
+
+
+# runs the criteria and picks the sealed outcome out of what they printed.
+# Gives back the finished run and the outcome (None when there is none)
+def run_criteria(run_dir, code):
+    # the secret of this run, made here and never written to disk. It is
+    # what tells our own answer apart from anything the delivered code
+    # prints on the same stream
+    nonce = secrets.token_hex(32)
+
+    if SANDBOX:
+        run = run_in_sandbox(run_dir, code, nonce)
+    else:
+        run = run_without_sandbox(run_dir, code, nonce)
+
+    return run, sealed_outcome(run.stdout, nonce)
+
+
+# decides what a run that sent back no sealed outcome means, and answers with
+# the exit code
+def answer_without_outcome(run, system, key, project, header, write_back):
+    # a delivery that never ends, or that eats the machine until the
+    # kernel stops it, is an invalid delivery and not a breakdown of
+    # this system. It used to come back as 2, so nothing was written
+    # anywhere, the user story stayed in the queue, and the next round
+    # ran into the same wall: a red build for ever and a developer who
+    # was never told why. The outcome cannot be sealed in these two
+    # cases, because the line comes out at the end of the criteria and
+    # the criteria never got there
+    stopped = None
+    if run.returncode == EXPIRED:
+        stopped = run.stderr.strip()
+    elif run.returncode == 137:                 # 128 + SIGKILL: the container was killed from outside
+        stopped = ("The criteria did not finish: the container was "
+                   "killed, which is what the memory and process "
+                   "limits do")
+
+    if stopped is not None:
+        return refuse_delivery(system, key, project, header, stopped, write_back)
+
+    # anything else is this system that could not answer, and saying so
+    # to the developer would blame him for our own breakage
+    print("The run did not send back a sealed outcome:", file=sys.stderr)
+    print((run.stdout + run.stderr).strip()[-2000:], file=sys.stderr)
+    return 2
+
+
+# records on the chain that the automated criteria passed
+#
+# only when every automated criterion passed: it is the first of the
+# three authorisations to payment, the other two stay human.
+#
+# It goes first, and the report after: the other way round a project
+# management system that was down took the signature with it, and the
+# tests had passed. The fact belongs on the chain, the report is the
+# account of it
+#
+# which user story this is comes from the chain and from nowhere else.
+# It used to be possible to name it in the header of the task, with a
+# Blockchain: line, and that was a way in for the wrong number: the
+# task says what has to be done, the contract says who is working on
+# what. setExternalRef ties the two together, and reading it back is
+# what --story does
+def record_on_chain(story_id, full_revision, body):
+    import blockchain
+
+    print()
+    blockchain.record_tests_passed(story_id, full_revision,
+                                   blockchain.criteria_hash(body))   # the very text that was run
+
+
+def main():
+    write_back = "--write" in sys.argv
+    sign_chain = "--chain" in sys.argv
+    print_hash = "--hash" in sys.argv               # prints the fingerprint of the criteria and stops
+
+    # values and options kept apart, so their order does not matter
+    command_line = read_command_line()
+    if command_line is None:
+        return 2
+    arguments, story_id = command_line
 
     declared_commit = None
     frozen_criteria = None
     requested = None
 
     if story_id is not None:
-        import blockchain
-        try:
-            delivery = blockchain.get_delivery(story_id)
-        except Exception as error:
-            print(str(error), file=sys.stderr)
+        task = task_from_chain(story_id)
+        if task is None:
             return 2
-        system = delivery["system"]
-        key = delivery["task"]
-        declared_commit = delivery["commit"]
-        frozen_criteria = delivery["criteriaHash"]
-        print("User story " + str(story_id) + " on chain")
-        print("  task     " + system + " " + key)
-        print("  commit   " + declared_commit)
-        print("  developer " + delivery["developer"])
-        print()
+        system, key, declared_commit, frozen_criteria = task
     else:
-        if len(arguments) < 2:
-            print("Usage: verify.py <openproject|taiga|jira> <id> [repository] "
-                  "[--write]", file=sys.stderr)
-            print("       verify.py --story <id> [--write] [--chain]", file=sys.stderr)
+        task = task_from_command_line(arguments)
+        if task is None:
             return 2
-        system, key = arguments[0], arguments[1]
-        if len(arguments) > 2:                                     # the repository is optional
-            requested = arguments[2]
-        else:
-            requested = None
+        system, key, requested = task
 
     # said now and not at the end. It used to print a line and answer 0, so a
     # pipeline asking for a signature it never got was told everything went
@@ -304,15 +482,10 @@ def main():
     key = fetch_criteria.normalize(system, key)         # once only, the same identifier is used to write back as well
 
     # --- the criteria, from the project management system ---
-    title, description, project = fetch_criteria.READERS[system](key)
-    body = fetch_criteria.clean(description, system)
-
-    if not re.search(r"^\s*Scenario", body, re.M):
-        print("No acceptance criteria found in " + system + " " + key,
-              file=sys.stderr)
-        print("Somebody has to write them in the task: this is not a delivery "
-              "that failed.", file=sys.stderr)
+    criteria = read_criteria(system, key)
+    if criteria is None:
         return 3                                        # a task with no criteria will not grow any by itself
+    title, body, project = criteria
 
     if print_hash:                                  # what the product owner freezes with setCriteriaHash
         import blockchain
@@ -322,18 +495,8 @@ def main():
     # the criteria are checked before anything else happens: nothing is cloned,
     # nothing is run and nothing is written back for a delivery that is going
     # to be refused anyway
-    if frozen_criteria is not None:
-        import blockchain
-        running = blockchain.criteria_hash(body)
-        if running != frozen_criteria:
-            print("These are not the criteria agreed on chain", file=sys.stderr)
-            print("  agreed " + blockchain.prefixed(frozen_criteria), file=sys.stderr)
-            print("  found  " + blockchain.prefixed(running), file=sys.stderr)
-            print("The text in the task was changed after it was frozen: until "
-                  "somebody puts it back, or the user story is reopened with "
-                  "the new criteria, this delivery cannot be verified.",
-                  file=sys.stderr)
-            return 3                                    # the text will not go back on its own
+    if not criteria_are_the_frozen_ones(body, frozen_criteria):
+        return 3                                        # the text will not go back on its own
 
     repository = repository_for(system, project, body, requested)
     if repository is None:
@@ -358,74 +521,18 @@ def main():
             # not a breakdown of this system: it is refused once and said out
             # loud. Returning 2 left it in the queue, so Jenkins retried it at
             # every round for ever and the developer was never told
-            print(problem, file=sys.stderr)
-            if write_back:
-                report.write(system, key, project,
-                             "\n".join(header + ["", "Status: rejected, " + problem]),
-                             False)
-                print("Written back to " + system + ".")
-            return 1
+            return refuse_delivery(system, key, project, header, problem, write_back)
 
-        revision = subprocess.run(["git", "rev-parse", "--short", "HEAD"],
-                                  cwd=code, capture_output=True, text=True)   # short form, for the report
-        full_revision = subprocess.run(["git", "rev-parse", "HEAD"],
-                                       cwd=code, capture_output=True, text=True)   # forty digits, for the chain
-
-        header.insert(1, "Repository: " + repository + " @ " + revision.stdout.strip())
+        short_revision, full_revision = read_revisions(code)
+        header.insert(1, "Repository: " + repository + " @ " + short_revision)
 
         # --- the vocabulary, from our own repository ---
-        folder = os.path.join(run_dir, "features")
-        os.makedirs(os.path.join(folder, "steps"))      # behave expects exactly this layout
-        shutil.copy(os.path.join(VERIFIER, "features", "environment.py"), folder)
-        shutil.copy(os.path.join(VERIFIER, "features", "steps", "vocabulary.py"),
-                    os.path.join(folder, "steps"))      # it comes from us, never from the delivered repository
-
-        with open(os.path.join(folder, "story.feature"), "w", encoding="utf-8") as f:
-            f.write("Feature: " + title + "\n\n" + body + "\n")
+        prepare_run(run_dir, title, body)
 
         # --- running ---
-        # the secret of this run, made here and never written to disk. It is
-        # what tells our own answer apart from anything the delivered code
-        # prints on the same stream
-        nonce = secrets.token_hex(32)
-
-        if SANDBOX:
-            run = run_in_sandbox(run_dir, code, nonce)
-        else:
-            run = run_without_sandbox(run_dir, code, nonce)
-
-        outcome = sealed_outcome(run.stdout, nonce)
+        run, outcome = run_criteria(run_dir, code)
         if outcome is None:                             # no sealed answer: behave did not get to the end of the criteria
-            # a delivery that never ends, or that eats the machine until the
-            # kernel stops it, is an invalid delivery and not a breakdown of
-            # this system. It used to come back as 2, so nothing was written
-            # anywhere, the user story stayed in the queue, and the next round
-            # ran into the same wall: a red build for ever and a developer who
-            # was never told why. The outcome cannot be sealed in these two
-            # cases, because the line comes out at the end of the criteria and
-            # the criteria never got there
-            stopped = None
-            if run.returncode == EXPIRED:
-                stopped = run.stderr.strip()
-            elif run.returncode == 137:                 # 128 + SIGKILL: the container was killed from outside
-                stopped = ("The criteria did not finish: the container was "
-                           "killed, which is what the memory and process "
-                           "limits do")
-
-            if stopped is not None:
-                print(stopped, file=sys.stderr)
-                if write_back:
-                    report.write(system, key, project,
-                                 "\n".join(header + ["", "Status: rejected, " + stopped]),
-                                 False)
-                    print("Written back to " + system + ".")
-                return 1
-
-            # anything else is this system that could not answer, and saying so
-            # to the developer would blame him for our own breakage
-            print("The run did not send back a sealed outcome:", file=sys.stderr)
-            print((run.stdout + run.stderr).strip()[-2000:], file=sys.stderr)
-            return 2
+            return answer_without_outcome(run, system, key, project, header, write_back)
 
         text, passed = report.summary(outcome, header)
         print(text)
@@ -441,25 +548,8 @@ def main():
             return 2
 
         # --- the record on the chain ---
-        # only when every automated criterion passed: it is the first of the
-        # three authorisations to payment, the other two stay human.
-        #
-        # It goes first, and the report after: the other way round a project
-        # management system that was down took the signature with it, and the
-        # tests had passed. The fact belongs on the chain, the report is the
-        # account of it
-        # which user story this is comes from the chain and from nowhere else.
-        # It used to be possible to name it in the header of the task, with a
-        # Blockchain: line, and that was a way in for the wrong number: the
-        # task says what has to be done, the contract says who is working on
-        # what. setExternalRef ties the two together, and reading it back is
-        # what --story does
         if sign_chain and passed:
-            import blockchain
-
-            print()
-            blockchain.record_tests_passed(story_id, full_revision.stdout.strip(),
-                                           blockchain.criteria_hash(body))   # the very text that was run
+            record_on_chain(story_id, full_revision, body)
 
         # --- the outcome goes back into the project management system ---
         if write_back:

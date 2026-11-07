@@ -161,54 +161,35 @@ def get_delivery(story_id, address=None):
             "developer": story["developer"]}
 
 
-def record_tests_passed(story_id, commit, criteria, address=None):
-    story_id = int(story_id)                  # arrives as a string from the command line
-    w3, contract = connect(address)
-
-    if not is_invited(contract):
-        print("This contract does not list us as a verifier, nothing recorded")
-        return None
-
-    # free checks, before spending anything. These mirror the contract's own
-    # requires: in Python they save gas, in Solidity they enforce the rule
-    story = read_story(contract, story_id)
-
+# says, on screen, why there is nothing to record for this user story, and
+# answers true when there is not. It mirrors the checks the contract makes
+# itself: in Python they save gas, in Solidity they enforce the rule
+def nothing_to_record(contract, story_id, story):
     if story["paid"]:
         print("User story " + str(story_id) + " is already paid, nothing to record")
-        return None                           # None means nothing was done, not an error
+        return True
 
     if not story["taken"]:
         print("User story " + str(story_id) + " has not been claimed by any "
               "developer, nothing to record")
-        return None
+        return True
 
     if not story["workSubmitted"]:
         print("User story " + str(story_id) + " has no declared delivery, "
               "nothing to record")
-        return None
+        return True
 
     if contract.functions.getApprovals(story_id).call()[0]:   # [0] is the tests box
         print("User story " + str(story_id) + " is already recorded, "
               "no transaction sent")
-        return None                           # the box is written once only
+        return True                           # the box is written once only
 
-    # the commit the developer declared on chain, which is the one that must be verified
-    # from here on a mismatch is raised and not reported: it means the
-    # delivery and what was verified have come apart, and somebody has to look
-    declared = to_bytes20(commit)
-    if story["commit"] != declared:
-        raise RuntimeError("The verified commit does not match the declared delivery:"
-                           " declared " + story["commit"].hex() +
-                           ", verified " + declared.hex())
+    return False
 
-    # the criteria the contract froze before the work started
-    frozen = story["criteriaHash"]
-    if frozen != criteria:
-        raise RuntimeError("These are not the criteria agreed on chain:"
-                           " agreed " + prefixed(frozen) +
-                           ", run " + prefixed(criteria))
 
-    # the signature, which costs gas
+# signs the transaction that records the tests, sends it and waits for the
+# block. This is the part that costs gas
+def send_tests_passed(w3, contract, story_id, story, declared, criteria):
     account = w3.eth.account.from_key(VERIFIER_KEY)     # the address comes from the key, locally
     call = contract.functions.recordTestsPassed(story_id, declared, criteria)   # prepares the call, does not send it
 
@@ -236,6 +217,43 @@ def record_tests_passed(story_id, commit, criteria, address=None):
     print("Recorded in block " + str(receipt.blockNumber) +
           ", gas used " + str(receipt.gasUsed))
     return receipt
+
+
+# records on the chain that the automated tests passed for this user story,
+# after checking for free everything the contract would check. Gives back the
+# receipt, or None when nothing was done, which is not an error
+def record_tests_passed(story_id, commit, criteria, address=None):
+    story_id = int(story_id)                  # arrives as a string from the command line
+    w3, contract = connect(address)
+
+    if not is_invited(contract):
+        print("This contract does not list us as a verifier, nothing recorded")
+        return None
+
+    # free checks, before spending anything
+    story = read_story(contract, story_id)
+
+    if nothing_to_record(contract, story_id, story):
+        return None
+
+    # the commit the developer declared on chain, which is the one that must be verified
+    # from here on a mismatch is raised and not reported: it means the
+    # delivery and what was verified have come apart, and somebody has to look
+    declared = to_bytes20(commit)
+    if story["commit"] != declared:
+        raise RuntimeError("The verified commit does not match the declared delivery:"
+                           " declared " + story["commit"].hex() +
+                           ", verified " + declared.hex())
+
+    # the criteria the contract froze before the work started
+    frozen = story["criteriaHash"]
+    if frozen != criteria:
+        raise RuntimeError("These are not the criteria agreed on chain:"
+                           " agreed " + prefixed(frozen) +
+                           ", run " + prefixed(criteria))
+
+    # the signature, which costs gas
+    return send_tests_passed(w3, contract, story_id, story, declared, criteria)
 
 
 def main():

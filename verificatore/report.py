@@ -49,6 +49,44 @@ def taiga_login():
 # The outcome, read from the sealed line the run sent back
 
 
+# the lines that say why a scenario failed: for each step in it, the step
+# itself and the message of the error. Only the step that stopped the run is
+# in the outcome
+def failure_lines(scenario):
+    lines = []
+    for item in scenario.get("steps", []):
+        lines.append("      step:  " + item["keyword"] + " " + item["name"])
+
+        said = str(item.get("error", ""))
+
+        detail = []
+        for line in said.split("\n"):
+            line = line.strip()
+            # behave calls it "Assertion Failed" when it reports the
+            # error and "ASSERT FAILED" on screen, so the match
+            # ignores case
+            if re.match(r"^assert(ion)? failed:", line, re.I):
+                detail.append(line.split(":", 1)[1].strip())   # throws the label away and keeps the message
+
+        # a step that broke instead of failing an assertion has no
+        # such line, and was reported as FAILED with nothing written
+        # under it. The last line of what was raised is the one that
+        # names the reason, so that is the one kept
+        if not detail:
+            last = ""
+            for line in said.split("\n"):
+                line = line.strip()
+                if line:
+                    last = line
+            if last:
+                detail.append(last)
+
+        for line in detail:
+            lines.append("      " + line)
+
+    return lines
+
+
 # works out both the text of the report and the verdict, from the outcome that
 # came back sealed from the run. The boolean it returns is the most important
 # value of this side of the system: it decides the exit code and whether
@@ -93,35 +131,7 @@ def summary(outcome, header):
         lines.append("  " + scenario["name"].ljust(44) + label)   # lines the outcomes up in a column
 
         if label == "FAILED":
-            for item in scenario.get("steps", []):            # only the step that stopped the run is in here
-                lines.append("      step:  " + item["keyword"] + " " + item["name"])
-
-                said = str(item.get("error", ""))
-
-                detail = []
-                for line in said.split("\n"):
-                    line = line.strip()
-                    # behave calls it "Assertion Failed" when it reports the
-                    # error and "ASSERT FAILED" on screen, so the match
-                    # ignores case
-                    if re.match(r"^assert(ion)? failed:", line, re.I):
-                        detail.append(line.split(":", 1)[1].strip())   # throws the label away and keeps the message
-
-                # a step that broke instead of failing an assertion has no
-                # such line, and was reported as FAILED with nothing written
-                # under it. The last line of what was raised is the one that
-                # names the reason, so that is the one kept
-                if not detail:
-                    last = ""
-                    for line in said.split("\n"):
-                        line = line.strip()
-                        if line:
-                            last = line
-                    if last:
-                        detail.append(last)
-
-                for line in detail:
-                    lines.append("      " + line)
+            lines.extend(failure_lines(scenario))
 
     if manual:
         lines.append("")
@@ -164,11 +174,11 @@ def target_status(system, project, passed):
 def to_openproject(key, text, status):
     headers = fc.basic("apikey", fc.OP_TOKEN)
     base = fc.OP_URL + "/api/v3/work_packages/" + key
-    call(base + "/activities", headers, {"comment": {"raw": "```\n" + text + "\n```"}}, "POST")   # mantiene l'incolonnamento
+    call(base + "/activities", headers, {"comment": {"raw": "```\n" + text + "\n```"}}, "POST")   # keeps the columns lined up
 
     current = call(base, headers)                             # reads the version
     call(base, headers, {
-        "lockVersion": current["lockVersion"],                # se qualcuno ha toccato la task nel frattempo rifiuta invece di sovrascrivere
+        "lockVersion": current["lockVersion"],                # if somebody touched the task in the meantime it refuses instead of overwriting
         "_links": {"status": {"href": "/api/v3/statuses/" + str(status)}}
     }, "PATCH")
 
@@ -180,9 +190,9 @@ def to_taiga(key, text, status):
                  "&project__slug=" + fc.TAIGA_SLUG, headers)
 
     call(fc.TAIGA_URL + "/api/v1/userstories/" + str(story["id"]), headers, {
-        "version": story["version"],                          # stesso controllo di OP
+        "version": story["version"],                          # same check as OpenProject
         "status": status,
-        "comment": "```\n" + text + "\n```"                   # commento e stato 
+        "comment": "```\n" + text + "\n```"                   # comment and status in the same request
     }, "PATCH")
 
 
